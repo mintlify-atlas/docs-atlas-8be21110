@@ -1,0 +1,182 @@
+---
+title: "All Connection Properties"
+description: "Complete reference for all PostgreSQL JDBC Driver connection properties."
+keywords: ["pgjdbc", "connection properties", "JDBC", "PostgreSQL", "connection URL"]
+---
+
+Connection properties can be specified in either the connection URL or via a `Properties` object passed to `DriverManager.getConnection`.
+
+```java
+// URL style
+String url = "jdbc:postgresql://localhost/test?user=fred&password=secret&ssl=true";
+Connection conn = DriverManager.getConnection(url);
+
+// Properties style
+String url = "jdbc:postgresql://localhost/test";
+Properties props = new Properties();
+props.setProperty("user", "fred");
+props.setProperty("password", "secret");
+props.setProperty("ssl", "true");
+Connection conn = DriverManager.getConnection(url, props);
+```
+
+<Note>
+If a property is specified both in the URL and in a `Properties` object, the value from the `Properties` object is ignored. URL properties take precedence.
+</Note>
+
+## Connection properties
+
+<AccordionGroup>
+  <Accordion title="Basic connection" defaultOpen={true}>
+
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `user` | String | null | The database user on whose behalf the connection is being made. |
+| `password` | String | null | The database user's password. |
+| `options` | String | null | Specify `options` connection initialization parameter. For example, `-c statement_timeout=5min` sets the statement timeout for the session. |
+| `service` | String | null | Specify a service name described in the `pg_service.conf` file. A service file can provide all properties including hostname, port, and dbname. |
+
+  </Accordion>
+
+  <Accordion title="SSL properties">
+
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `ssl` | Boolean | false | Control use of SSL. A value of `true` causes SSL to be required. |
+| `sslfactory` | String | org.postgresql.ssl.LibPQFactory | Class name to use as the `SSLSocketFactory` when establishing an SSL connection. |
+| `sslfactoryarg` | String | null | **(Deprecated)** Argument forwarded to constructor of SSLSocketFactory class. |
+| `sslmode` | String | prefer | Controls SSL preference. Values: `disable`, `allow`, `prefer`, `require`, `verify-ca`, `verify-full`. |
+| `sslcert` | String | null | The full path to the client's SSL certificate (PEM-encoded X509v3). Defaults to `~/.postgresql/postgresql.crt` on Unix or `%appdata%/postgresql/postgresql.crt` on Windows. |
+| `sslkey` | String | null | The full path to the client's PKCS#8 or PKCS#12 SSL key. For PKCS#12, the file extension must be `.p12` or `.pfx` and the alias must be `user`. |
+| `sslrootcert` | String | null | File name of the SSL root certificate for authenticating the server. Defaults to `~/.postgresql/root.crt`. |
+| `sslhostnameverifier` | String | null | Class name implementing `javax.net.ssl.HostnameVerifier` to verify the server hostname. Defaults to `org.postgresql.ssl.PGjdbcHostnameVerifier`. |
+| `sslpasswordcallback` | String | null | Class name implementing `javax.security.auth.callback.CallbackHandler` for providing the SSL key password. |
+| `sslpassword` | String | null | The password for the client's SSL key. Ignored if `sslpasswordcallback` is set. |
+| `sslnegotiation` | String | postgres | Determines SSL negotiation style. Set to `direct` to use ALPN (requires PostgreSQL 17+). |
+| `sslResponseTimeout` | Integer | 5000 | Socket timeout in milliseconds waiting for a response after requesting SSL upgrade from the server. |
+| `channelBinding` | String | prefer | Controls channel binding use. Values: `require`, `prefer`, `disable`. |
+
+  </Accordion>
+
+  <Accordion title="Timeout and network">
+
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `connectTimeout` | Integer | 10 | Socket connect timeout in seconds, max 2147484. A value of zero disables it. |
+| `loginTimeout` | Integer | 0 | Maximum time in seconds to wait for a database connection to be established. A value of 0 means no timeout. |
+| `socketTimeout` | Integer | 0 | Socket read timeout in seconds, max 2147484. A value of zero disables it. Can act as a global query timeout. |
+| `queryTimeout` | Integer | 0 | Default query timeout in seconds, if not overridden by `Statement.setQueryTimeout()`. A value of 0 means no timeout. |
+| `cancelSignalTimeout` | Integer | 10 | Timeout in seconds for sending a cancel command. Controls the connect and socket timeout for cancel messages. |
+| `sslResponseTimeout` | Integer | 5000 | Socket timeout in milliseconds waiting for response to SSL upgrade request. |
+| `gssResponseTimeout` | Integer | 5000 | Socket timeout in milliseconds waiting for response to GSS encryption request. |
+| `tcpKeepAlive` | Boolean | false | Enable or disable TCP keep-alive probes. |
+| `tcpNoDelay` | Boolean | true | Enable or disable TCP no-delay (Nagle's algorithm). |
+| `sendBufferSize` | Integer | -1 | Sets `SO_SNDBUF` on the connection stream. Use -1 for OS default. |
+| `maxSendBufferSize` | Integer | 65536 | Maximum bytes buffered before sending to the backend. Effective size is `min(maxSendBufferSize, max(8192, SO_SNDBUF))`. |
+| `receiveBufferSize` | Integer | -1 | Sets `SO_RCVBUF` on the connection stream. Use -1 for OS default. |
+| `hostRecheckSeconds` | Integer | 10 | Period in seconds after which a cached host status is rechecked. |
+| `localSocketAddress` | String | null | Hostname or IP to explicitly bind the client side of the TCP/IP connection to. |
+
+  </Accordion>
+
+  <Accordion title="Prepared statements and query execution">
+
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `prepareThreshold` | Integer | 5 | Number of `PreparedStatement` executions before switching to server-side prepare. Use `-1` to always use server-side prepare (and force binary transfer). Use `0` to disable. |
+| `preparedStatementCacheQueries` | Integer | 256 | Maximum number of entries in the per-connection prepared statement cache. Use `0` to disable. |
+| `preparedStatementCacheSizeMiB` | Integer | 5 | Maximum size in MiB of the per-connection prepared statement cache. Use `0` to disable. |
+| `preferQueryMode` | String | extended | Query execution mode. Values: `extended`, `extendedForPrepared`, `extendedCacheEverything`, `simple`. |
+| `autosave` | String | never | Driver behavior on query failure. Values: `always` (savepoint before every query), `never`, `conservative` (savepoint, rollback only for specific errors). |
+| `cleanupSavepoints` | Boolean | false | In `autosave` mode, release each savepoint after use to avoid exhausting server shared buffers. Costs one extra round trip per query. |
+| `escapeSyntaxCallMode` | String | select | How JDBC escape call syntax is transformed. Values: `select` (always SELECT), `callIfNoReturn` (CALL if no return param), `call` (always CALL). |
+| `reWriteBatchedInserts` | Boolean | false | Rewrite compatible batched INSERT statements as a single multi-row INSERT. Provides 2-3x performance improvement. |
+
+  </Accordion>
+
+  <Accordion title="Result sets and data transfer">
+
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `defaultRowFetchSize` | Integer | 0 | Number of rows fetched per database round trip for a `ResultSet`. Use 0 to fetch all rows at once. |
+| `binaryTransfer` | Boolean | true | Enable binary transfer for supported built-in types. Setting to `false` disables all binary transfer unless individually enabled via `binaryTransferEnable`. |
+| `binaryTransferEnable` | String | "" | Comma-separated list of types (by OID number or name) to enable binary transfer for. |
+| `binaryTransferDisable` | String | "" | Comma-separated list of types (by OID number or name) to disable binary transfer for. Overrides driver defaults and `binaryTransferEnable`. |
+| `maxResultBuffer` | String | null | Maximum size of result buffer during ResultSet reading. Specify as bytes (`100`, `200M`, `2G`) or heap percentage (`10p`, `20pct`). |
+| `adaptiveFetch` | Boolean | false | Dynamically calculate the number of rows to fetch per iteration to maximize use of `maxResultBuffer`. Requires `maxResultBuffer` and `defaultRowFetchSize`. |
+| `adaptiveFetchMinimum` | Integer | 0 | Minimum number of rows that `adaptiveFetch` can calculate. |
+| `adaptiveFetchMaximum` | Integer | -1 | Maximum number of rows that `adaptiveFetch` can calculate. Negative values mean unlimited. |
+| `unknownLength` | Integer | Integer.MAX_VALUE | Length to report for types of unknown length (e.g., `TEXT`) via `ResultSetMetaData`. |
+| `convertBooleanToNumeric` | Boolean | false | Automatically convert PostgreSQL boolean values (`t`/`f`) to numeric types (1/0) when using numeric getters (`getInt`, `getLong`, `getDouble`, etc.) on a `ResultSet`. |
+| `databaseMetadataCacheFields` | Integer | 65536 | Maximum number of fields to cache per connection in the `DatabaseMetaData` cache. Use `0` to disable. |
+| `databaseMetadataCacheFieldsMiB` | Integer | 5 | Maximum size in MiB of the `DatabaseMetaData` field cache per connection. Use `0` to disable. |
+
+  </Accordion>
+
+  <Accordion title="Connection behavior">
+
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `ApplicationName` | String | PostgreSQL JDBC Driver | Application name visible in `pg_stat_activity`. Sent at startup if `assumeMinServerVersion >= 9.0`. |
+| `readOnly` | Boolean | false | Put the connection in read-only mode. |
+| `readOnlyMode` | String | transaction | Read-only enforcement mode. Values: `ignore` (no effect), `transaction` (sends `BEGIN READ ONLY` when autocommit is off), `always` (sets session to READ ONLY). |
+| `disableColumnSanitiser` | Boolean | false | Disable column name sanitization (folding to lowercase). Setting to `true` preserves original case. |
+| `assumeMinServerVersion` | String | null | Assume the server is at least this version. Enables optimizations such as sending `ApplicationName` at startup. |
+| `currentSchema` | String | null | Schema (or comma-separated schemas) to set in the `search_path`. |
+| `targetServerType` | String | any | Only connect to servers of the specified type. Values: `any`, `primary`, `master`, `secondary`, `slave` (deprecated), `preferSecondary`, `preferPrimary`. |
+| `loadBalanceHosts` | Boolean | false | If enabled, randomly choose among suitable host candidates instead of connecting in order. |
+| `socketFactory` | String | null | Class name extending `javax.net.SocketFactory` to use for socket creation (e.g., for Unix domain sockets). |
+| `socketFactoryArg` | String | null | **(Deprecated)** Argument to the socket factory class constructor. |
+| `stringtype` | String | null | Type binding for `PreparedStatement.setString()`. Values: `VARCHAR` (default) or `unspecified` (server infers type). |
+| `logServerErrorDetail` | Boolean | true | Include server error detail (e.g., query parameters) in exceptions and logs. Set to `false` to avoid exposing sensitive data. |
+| `allowEncodingChanges` | Boolean | false | Allow `client_encoding` changes. Only needed when using `COPY` with server-side files that require a specific encoding. |
+| `logUnclosedConnections` | Boolean | false | Log a stack trace when a connection is garbage collected without being explicitly closed. |
+| `quoteReturningIdentifiers` | Boolean | true | Double-quote identifiers in `RETURNING` clauses. Disable if your ORM already quotes them. |
+
+  </Accordion>
+
+  <Accordion title="GSS and Kerberos authentication">
+
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `gssLib` | String | auto | GSS/SSPI library selection. Values: `auto`, `sspi` (force Windows SSPI), `gssapi` (force GSSAPI/JSSE). |
+| `gssResponseTimeout` | Integer | 5000 | Socket timeout in milliseconds waiting for response to GSS encrypted connection request. |
+| `gssEncMode` | String | allow | GSSAPI encryption preference. Values: `disable`, `allow`, `prefer`, `require`. |
+| `useSpnego` | Boolean | false | Use SPNEGO in SSPI authentication requests. |
+| `kerberosServerName` | String | postgres | The Kerberos service name for GSSAPI authentication. Equivalent to libpq's `PGKRBSRVNAME`. |
+| `jaasApplicationName` | String | pgjdbc | JAAS system or application login configuration name. |
+| `jaasLogin` | Boolean | true | Perform a JAAS login before authenticating with GSSAPI. |
+| `gssUseDefaultCreds` | Boolean | false | Use default system GSS credentials instead of JAAS. Useful for KCM or other CCACHE sources. |
+| `sspiServiceClass` | String | POSTGRES | Windows SSPI service class for SPN construction. Ignored on non-Windows platforms. |
+
+  </Accordion>
+
+  <Accordion title="Authentication">
+
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `requireAuth` | String | null | Comma-separated list of acceptable authentication methods. Prefix with `!` to reject a method (e.g., `!password`). Supported: `password`, `md5`, `gss`, `sspi`, `scram-sha-256`, `none`. Cannot mix positive and negative options. |
+| `authenticationPluginClassName` | String | null | Fully qualified class name implementing `AuthenticationPlugin`. If null, the `password` property is used. |
+
+  </Accordion>
+
+  <Accordion title="Replication">
+
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `replication` | String | null | Enables replication mode. Values: `true` (walsender mode, simple queries only), `database` (walsender connected to a specific database for logical replication). Use with `assumeMinServerVersion=9.4`. |
+
+  </Accordion>
+</AccordionGroup>
+
+## System properties
+
+System properties are set via `-D` JVM flags rather than connection URLs.
+
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `pgjdbc.config.cleanup.thread.ttl` | long | 30000 | Duration in milliseconds the internal cleanup thread (which monitors unclosed connections) keeps running when idle. |
+
+```bash
+java -Dpgjdbc.config.cleanup.thread.ttl=60000 -jar myapp.jar
+```

@@ -1,0 +1,300 @@
+---
+title: "Contributing"
+description: "How to contribute to the PostgreSQL JDBC Driver (pgjdbc) project."
+keywords: ["pgjdbc", "contributing", "build", "tests", "pull request", "gradle"]
+---
+
+Thank you for your interest in contributing to the PostgreSQL JDBC Driver. The guidelines below establish a baseline for collaboration; apply them where they make sense.
+
+pgjdbc currently supports Oracle and OpenJDK Java **8 and higher**, and PostgreSQL server versions **9.1 and higher**.
+
+## Reporting issues
+
+### Bug reports
+
+Use [GitHub Issues](https://github.com/pgjdbc/pgjdbc/issues) to file bug reports. Include:
+
+- **Subject**: concise and descriptive
+- **Driver version**: e.g., `42.7.5`
+- **JDK version**: output of `java -version`
+- **PostgreSQL version**: output of `SELECT version()`
+- **Context**: what you were trying to accomplish
+- **Reproduction steps**: the simplest possible steps to reproduce
+
+A pull request with a failing JUnit test case is the most preferred form of a bug report.
+
+<Note>
+Bugs include: behaviors that worked in a previous release and now do not; any violation of the JDBC specification, unless explicitly documented as an extension.
+</Note>
+
+### Feature requests
+
+Post feature requests to the [pgjdbc mailing list](https://www.postgresql.org/list/pgsql-jdbc/) or open a [GitHub issue](https://github.com/pgjdbc/pgjdbc/issues/new). Include a detailed use case and consider how the change would affect other users and what side effects it might have.
+
+The best way to ensure a feature is implemented is to implement it yourself and submit a pull request.
+
+## Contributing code
+
+Key principles:
+
+1. API changes require discussion and documented use cases before any code is written.
+2. Pull requests are well-suited for small bug fixes and documentation changes.
+3. All pull requests must be approved and merged by a maintainer into the `master` branch.
+4. Pull requests must fully pass CI tests.
+
+## Build requirements
+
+- A Git client
+- JDK 8 or later (JDK 21 for pgjdbc 42.7.1+)
+- A running PostgreSQL instance (optional, required only for integration tests)
+
+pgjdbc uses [Gradle Toolchains](https://docs.gradle.org/current/userguide/toolchains.html), so Gradle automatically finds or downloads the required JDK version.
+
+**JDK version properties:**
+
+| Property | Default | Description |
+|---|---|---|
+| `jdkBuildVersion` | 21 | JDK version for building. Set to `0` to use the current Java. |
+| `jdkBuildVendor` | — | JDK vendor for building. |
+| `jdkTestVersion` | `jdkBuildVersion` | JDK version for running tests. |
+| `jdkTestVendor` | `jdkBuildVendor` | JDK vendor for running tests. |
+
+## Getting the source
+
+```bash
+git clone https://github.com/pgjdbc/pgjdbc.git
+cd pgjdbc
+```
+
+## Building
+
+<CodeGroup>
+
+```bash Build everything
+./gradlew build
+```
+
+```bash Assemble artifacts only
+./gradlew assemble
+```
+
+```bash Build without tests
+./gradlew build -x test
+```
+
+```bash Build Javadoc
+./gradlew javadoc
+```
+
+</CodeGroup>
+
+The built JAR is named `postgresql-<major>.<minor>.<patch>.jar`.
+
+<Note>
+`clean` is not required before rebuilding. Gradle automatically re-executes modified tasks. If you need to force test re-execution without code changes, run `./gradlew cleanTest test`.
+</Note>
+
+## Running tests
+
+Tests require a running PostgreSQL instance with:
+- A database named `test`
+- A user named `test`
+
+<CodeGroup>
+
+```bash All tests
+./gradlew test
+```
+
+```bash Specific test class
+./gradlew test --tests org.postgresql.test.ssl.SslTest
+```
+
+```bash Skip slow tests
+./gradlew test -PincludeTestTags='!org.postgresql.test.SlowTests'
+```
+
+```bash Test with a specific JDK version
+./gradlew test -PjdkTestVersion=21 --tests org.postgresql.test.ssl.SslTest
+```
+
+</CodeGroup>
+
+### Testing with Docker
+
+Docker Compose can launch a preconfigured test database:
+
+```bash
+cd docker/postgres-server
+
+# Launch latest PostgreSQL with SSL, XA, and SCRAM
+docker compose down && docker compose up
+
+# Launch PostgreSQL 9.6 with XA, without SSL
+docker compose down && SSL=no XA=yes docker compose up
+```
+
+Or use the single-container helper:
+
+```bash
+docker/bin/postgres-server
+```
+
+For further details, see [TESTING.md](https://github.com/pgjdbc/pgjdbc/blob/master/TESTING.md).
+
+### Testing older versions
+
+Remember to test against older PostgreSQL versions when possible, not just the version you run locally. Test against JDK 8 as well.
+
+Old JDK versions are available from the [Oracle Java Archive](http://www.oracle.com/technetwork/java/archive-139210.html).
+
+## Code style
+
+pgjdbc enforces style via [OpenRewrite](https://docs.openrewrite.org/), [Autostyle](https://github.com/autostyle/autostyle), [ForbiddenApis](https://github.com/policeman-tools/forbidden-apis), and [Checkstyle](https://github.com/checkstyle/checkstyle).
+
+The style is based on [Google Java Style](https://google.github.io/styleguide/javaguide.html) with 100-character line width.
+
+<CodeGroup>
+
+```bash Fix and verify style
+./gradlew style
+```
+
+```bash Report style violations only
+./gradlew styleCheck
+```
+
+```bash Check with Error Prone and Checker Framework
+./gradlew -PenableErrorprone -PenableCheckerframework classes
+```
+
+</CodeGroup>
+
+**Key rules:**
+- 2 spaces for indentation, no tabs
+- Trim trailing whitespace
+- Always use braces, even for single-line `if`
+- Always include `default:` in `switch` statements
+
+Style configuration is located in:
+- `pgjdbc/src/main/checkstyle/`
+- `config/openrewrite/`
+- `config/forbidden-apis/`
+- `config/checkerframework/`
+
+### Null safety
+
+The project uses the [Checker Framework](https://checkerframework.org/) for null safety verification. Parameters, return values, and fields are `@NonNull` by default. Add `@Nullable` as needed.
+
+```java
+// Nullable field
+@Nullable String value;
+
+// Monotonically non-null (starts null, becomes non-null later)
+@MonotonicNonNull Object resource;
+```
+
+## IDE setup
+
+### IntelliJ IDEA
+
+Open the project via **File → Open → `build.gradle.kts`**. Code style is managed via `.editorconfig` and configures automatically.
+
+To import the Checkstyle configuration:
+1. Copy `pgjdbc/src/main/checkstyle/pgjdbc-intellij-java-google-style.xml` to `$IDEA_CONFIG_LOCATION/codestyles/`.
+2. Restart IDEA.
+3. Select "GoogleStyle (PgJDBC)" in **Preferences → Editor → Code Style**.
+
+### Eclipse
+
+Use **File → Import → Existing Gradle Project** and import from the repository root.
+
+Import the formatter and import order configurations from `pgjdbc/src/main/checkstyle/`.
+
+## Commit message format
+
+Commit messages follow a structured format:
+
+```
+<type>: <subject>
+
+<body>
+
+<footer>
+```
+
+No line may exceed 100 characters.
+
+**Types:**
+
+| Type | Description |
+|---|---|
+| `feat` | A new feature |
+| `fix` | A bug fix |
+| `docs` | Documentation-only changes |
+| `style` | Formatting changes with no functional effect |
+| `refactor` | Code change that is neither a bug fix nor a new feature |
+| `perf` | Performance improvement |
+| `test` | Adding or updating tests |
+| `chore` | Build process or tooling changes |
+
+**Subject rules:**
+- Use the imperative, present tense: "add" not "added"
+- Do not capitalize the first letter
+- Do not end with a period
+
+## Submitting a pull request
+
+<Steps>
+  <Step title="Fork and clone">
+    Fork the repository on GitHub and clone your fork locally.
+
+    ```bash
+    git clone https://github.com/YOUR_USERNAME/pgjdbc.git
+    ```
+  </Step>
+  <Step title="Create a branch">
+    ```bash
+    git checkout -b my-fix-branch
+    ```
+  </Step>
+  <Step title="Write tests">
+    Add a unit test that demonstrates the bug or verifies the new feature. For bug fixes, the test should fail before your fix and pass after.
+  </Step>
+  <Step title="Implement your change">
+    Make your code changes following the code style guidelines.
+  </Step>
+  <Step title="Verify">
+    ```bash
+    ./gradlew style
+    ./gradlew test
+    ```
+  </Step>
+  <Step title="Open a pull request">
+    Push your branch and open a pull request against the `master` branch. GitHub Actions CI will run automatically.
+  </Step>
+</Steps>
+
+## Installing the driver
+
+To install the driver, add the JAR to your classpath:
+
+```bash
+java -cp postgresql-<version>.jar -jar myprogram.jar
+```
+
+Or via Maven:
+
+```xml
+<dependency>
+  <groupId>org.postgresql</groupId>
+  <artifactId>postgresql</artifactId>
+  <version>LATEST</version>
+</dependency>
+```
+
+## Community
+
+- **Mailing list**: [pgsql-jdbc](https://jdbc.postgresql.org/community/mailinglist.html)
+- **GitHub**: [github.com/pgjdbc/pgjdbc](https://github.com/pgjdbc/pgjdbc)
+- **Issue tracker**: [GitHub Issues](https://github.com/pgjdbc/pgjdbc/issues)

@@ -1,0 +1,278 @@
+---
+title: "Connection Pools and Data Sources"
+description: "Configure PostgreSQL JDBC data sources and connection pools, including PGSimpleDataSource, PGPoolingDataSource, PGConnectionPoolDataSource, PGXADataSource, JNDI, and Tomcat integration."
+keywords: ["datasource", "connection pool", "PGSimpleDataSource", "PGPoolingDataSource", "PGConnectionPoolDataSource", "PGXADataSource", "JNDI", "Tomcat", "HikariCP"]
+---
+
+The JDBC API provides client and server interfaces for connection pooling. The client interface is `javax.sql.DataSource`, which application code uses to acquire database connections. The server interface is `javax.sql.ConnectionPoolDataSource`, which application servers use to integrate with the driver.
+
+## Available implementations
+
+| Interface | Class | Description |
+|---|---|---|
+| `java.sql.Driver` | `org.postgresql.Driver` | Standard JDBC driver |
+| `javax.sql.DataSource` | `org.postgresql.ds.PGSimpleDataSource` | No pooling, direct connections |
+| `javax.sql.DataSource` | `org.postgresql.ds.PGPoolingDataSource` | Built-in connection pool (limited) |
+| `javax.sql.ConnectionPoolDataSource` | `org.postgresql.ds.PGConnectionPoolDataSource` | For use with application servers |
+| `javax.sql.XADataSource` | `org.postgresql.xa.PGXADataSource` | Distributed (XA) transactions |
+
+## PGSimpleDataSource
+
+`PGSimpleDataSource` provides database connections through the `DataSource` interface without any pooling. Each call to `getConnection()` opens a new physical connection to the database.
+
+Use this implementation for simple applications or when your application server or external pool manages connection lifecycle.
+
+```java
+PGSimpleDataSource ds = new PGSimpleDataSource();
+ds.setServerNames(new String[] { "localhost" });
+ds.setDatabaseName("mydb");
+ds.setUser("myuser");
+ds.setPassword("mypassword");
+
+try (Connection conn = ds.getConnection()) {
+    // use connection
+}
+```
+
+## PGConnectionPoolDataSource
+
+`PGConnectionPoolDataSource` is intended for use with application servers that manage pooling. The application server configuration references this implementation, while application code acquires connections through the application server's own `DataSource`.
+
+Configure it using JavaBean properties:
+
+| Property | Type | Description |
+|---|---|---|
+| `serverName` | String | PostgreSQL database server host name |
+| `databaseName` | String | PostgreSQL database name |
+| `portNumber` | int | TCP port (0 to use default 5432) |
+| `user` | String | User for database connections |
+| `password` | String | Password for database connections |
+| `ssl` | boolean | Use SSL encrypted connections (default `false`) |
+| `sslfactory` | String | Custom `SSLSocketFactory` class name |
+| `defaultAutoCommit` | boolean | Whether connections have autocommit enabled (default `false`) |
+
+Many application servers accept properties as a block of text:
+
+```
+serverName=localhost
+databaseName=test
+user=testuser
+password=testpassword
+```
+
+Or with semicolons as separators:
+
+```
+serverName=localhost;databaseName=test;user=testuser;password=testpassword
+```
+
+## PGPoolingDataSource
+
+`PGPoolingDataSource` is a basic built-in connection pool. When clients call `close()` on a connection, it is returned to the pool rather than being closed, avoiding the overhead of repeatedly opening and closing connections.
+
+<Warning>
+The built-in pooling implementation has significant limitations: connections are never closed until the pool itself is closed, there is no way to shrink the pool, connections for users other than the default configured user are not pooled, and error handling cannot always remove broken connections from the pool.
+
+For production use, prefer a dedicated external pool such as [HikariCP](https://github.com/brettwooldridge/HikariCP) or [c3p0](https://www.mchange.com/projects/c3p0/).
+</Warning>
+
+### Configuration properties
+
+In addition to the standard DataSource properties, the pooling implementation requires:
+
+| Property | Type | Description |
+|---|---|---|
+| `serverName` | String | PostgreSQL database server host name |
+| `databaseName` | String | PostgreSQL database name |
+| `portNumber` | int | TCP port (0 for default) |
+| `user` | String | User for database connections |
+| `password` | String | Password for database connections |
+| `ssl` | boolean | Use SSL (default `false`) |
+| `sslfactory` | String | Custom `SSLSocketFactory` class name |
+| `dataSourceName` | String | Unique name for the pool (required) |
+| `initialConnections` | int | Connections to create when the pool is initialized |
+| `maxConnections` | int | Maximum open connections; callers block when the limit is reached |
+
+### Example
+
+```java
+PGPoolingDataSource source = new PGPoolingDataSource();
+source.setDataSourceName("A Data Source");
+source.setServerNames(new String[] { "localhost" });
+source.setDatabaseName("test");
+source.setUser("testuser");
+source.setPassword("testpassword");
+source.setMaxConnections(10);
+```
+
+<Note>
+`setServerName` has been deprecated in favour of `setServerNames` to support multiple hosts.
+</Note>
+
+Acquire connections from the pool with a try-with-resources block:
+
+```java
+try (Connection conn = source.getConnection()) {
+    // use connection
+} catch (SQLException e) {
+    // log error
+}
+```
+
+<Warning>
+Always close connections when finished. Leaked connections will eventually exhaust the pool and block all callers.
+</Warning>
+
+## PGXADataSource
+
+`PGXADataSource` implements `javax.sql.XADataSource` for distributed (XA) transactions, enabling two-phase commit across multiple databases or resources.
+
+Configure it the same way as `PGSimpleDataSource` using JavaBean properties:
+
+```java
+PGXADataSource xaDs = new PGXADataSource();
+xaDs.setServerNames(new String[] { "localhost" });
+xaDs.setDatabaseName("mydb");
+xaDs.setUser("myuser");
+xaDs.setPassword("mypassword");
+```
+
+## JNDI integration
+
+All `ConnectionPoolDataSource` and `DataSource` implementations can be stored in and retrieved from JNDI.
+
+- For non-pooling implementations, a new instance is created every time the object is retrieved from JNDI with the same settings as the stored instance.
+- For pooling implementations, the same instance is returned as long as it is available in the same JVM.
+
+### Storing and retrieving from JNDI
+
+```java
+PGPoolingDataSource source = new PGPoolingDataSource();
+source.setDataSourceName("A Data Source");
+source.setServerName("localhost");
+source.setDatabaseName("test");
+source.setUser("testuser");
+source.setPassword("testpassword");
+source.setMaxConnections(10);
+new InitialContext().rebind("DataSource", source);
+```
+
+Retrieve and use the connection:
+
+```java
+Connection conn = null;
+try {
+    DataSource source = (DataSource) new InitialContext().lookup("DataSource");
+    conn = source.getConnection();
+    // use connection
+} catch (SQLException e) {
+    // log error
+} catch (NamingException e) {
+    // DataSource wasn't found in JNDI
+} finally {
+    if (conn != null) {
+        try {
+            conn.close();
+        } catch (SQLException e) {}
+    }
+}
+```
+
+## Tomcat setup
+
+<Note>
+The `postgresql.jar` file must be placed in `$CATALINA_HOME/common/lib` for both Tomcat 4 and Tomcat 5.
+</Note>
+
+<Tabs>
+  <Tab title="Tomcat 4">
+    Place the following inside the `<Context>` tag in `conf/server.xml`:
+
+    ```xml
+    <Resource name="jdbc/postgres" scope="Shareable" type="javax.sql.DataSource"/>
+    <ResourceParams name="jdbc/postgres">
+      <parameter>
+        <name>validationQuery</name>
+        <value>select version();</value>
+      </parameter>
+      <parameter>
+        <name>url</name>
+        <value>jdbc:postgresql://localhost/davec</value>
+      </parameter>
+      <parameter>
+        <name>password</name>
+        <value>davec</value>
+      </parameter>
+      <parameter>
+        <name>maxActive</name>
+        <value>4</value>
+      </parameter>
+      <parameter>
+        <name>maxWait</name>
+        <value>5000</value>
+      </parameter>
+      <parameter>
+        <name>driverClassName</name>
+        <value>org.postgresql.Driver</value>
+      </parameter>
+      <parameter>
+        <name>username</name>
+        <value>davec</value>
+      </parameter>
+      <parameter>
+        <name>maxIdle</name>
+        <value>2</value>
+      </parameter>
+    </ResourceParams>
+    ```
+  </Tab>
+  <Tab title="Tomcat 5">
+    Place the same XML block inside the `<DefaultContext>` tag within the `<Host>` tag, or inside the context file at `$CATALINA_HOME/conf/Catalina/hostname/context.xml`.
+  </Tab>
+</Tabs>
+
+Retrieve the connection from Tomcat's JNDI context:
+
+```java
+import javax.naming.*;
+import javax.sql.*;
+import java.sql.*;
+
+public class DBTest {
+
+    String foo = "Not Connected";
+    int bar = -1;
+
+    public void init() {
+        try {
+            Context ctx = new InitialContext();
+            if (ctx == null)
+                throw new Exception("Boom - No Context");
+
+            // jdbc/postgres is the name of the resource above
+            DataSource ds = (DataSource) ctx.lookup("java:comp/env/jdbc/postgres");
+
+            if (ds != null) {
+                Connection conn = ds.getConnection();
+
+                if (conn != null) {
+                    foo = "Got Connection " + conn.toString();
+                    Statement stmt = conn.createStatement();
+                    ResultSet rst = stmt.executeQuery("select id, foo, bar from testdata");
+
+                    if (rst.next()) {
+                        foo = rst.getString(2);
+                        bar = rst.getInt(3);
+                    }
+                    conn.close();
+                }
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    public String getFoo() { return foo; }
+    public int getBar() { return bar; }
+}
+```

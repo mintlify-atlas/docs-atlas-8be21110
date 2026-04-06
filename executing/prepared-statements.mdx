@@ -1,0 +1,287 @@
+---
+title: "Prepared Statements"
+description: "Use standard PreparedStatement bindings and leverage server-side prepared statements for improved performance with the PostgreSQL JDBC driver."
+keywords: ["PreparedStatement", "server-side prepared statements", "prepareThreshold", "statement cache", "binary transfer", "autosave"]
+---
+
+`PreparedStatement` lets you parameterise SQL, protect against SQL injection, and unlock server-side execution plan caching for repeated queries.
+
+## Standard PreparedStatement usage
+
+Bind parameters using typed setters before calling `executeQuery()` or `executeUpdate()`.
+
+```java Standard parameterised query
+PreparedStatement st = conn.prepareStatement(
+    "SELECT id FROM rooms WHERE name = ?"
+);
+st.setString(1, "conference-a");   // bind a String
+ResultSet rs = st.executeQuery();
+while (rs.next()) {
+    System.out.println(rs.getInt("id"));
+}
+rs.close();
+st.close();
+```
+
+Common setter methods:
+
+| Method | SQL type |
+|--------|----------|
+| `setInt(int, int)` | `INTEGER` |
+| `setLong(int, long)` | `BIGINT` |
+| `setDouble(int, double)` | `DOUBLE PRECISION` |
+| `setString(int, String)` | `VARCHAR` / `TEXT` |
+| `setBoolean(int, boolean)` | `BOOLEAN` |
+| `setObject(int, Object)` | driver-inferred type |
+| `setNull(int, int)` | any (pass `Types.*` constant) |
+
+## Server-side prepared statements
+
+### Motivation
+
+The PostgreSQL server can compile and cache an execution plan for a statement so it does not have to be re-parsed and re-planned on every execution. Server-side prepared statements provide several benefits:
+
+1. Sends a short statement handle (e.g. `S_1`) instead of the full SQL text on subsequent executions.
+2. Enables binary transfer of parameters and results (much faster to parse than text).
+3. Allows the server to reuse its execution plan.
+4. The client can cache result-set column metadata instead of receiving it every time.
+
+### How the extended protocol works
+
+The driver uses PostgreSQL's **Extended Query** protocol by default for all `PreparedStatement` calls. An internal counter tracks how many times each statement has been executed. When the count reaches `prepareThreshold` (default **5**), the driver promotes the statement to a named server-side prepared statement and begins sending `Prepare` / `Execute` messages instead of inline SQL.
+
+<Steps>
+  <Step title="Executions 1–4: unnamed statement">
+    The driver uses the Extended Query protocol with a temporary unnamed statement. The full SQL is sent each time, but parameters are bound separately.
+  </Step>
+  <Step title="Execution 5+: named prepared statement">
+    The driver creates a named statement on the server (`Prepare` message). Subsequent executions send only the statement name and parameter values (`Execute` message).
+  </Step>
+</Steps>
+
+### Activation via connection URL
+
+```java Set prepareThreshold on the connection URL
+String url = "jdbc:postgresql://localhost:5432/test?prepareThreshold=3";
+Connection conn = DriverManager.getConnection(url, "test", "");
+```
+
+### Activation per statement
+
+Cast to `PGStatement` to set the threshold for a single statement:
+
+```java Per-statement threshold
+import java.sql.*;
+
+public class ServerSidePreparedStatement {
+
+    public static void main(String args[]) throws Exception {
+
+        String url = "jdbc:postgresql://localhost:5432/test";
+        try (Connection conn = DriverManager.getConnection(url, "test", "")) {
+
+            try (PreparedStatement pstmt = conn.prepareStatement("SELECT ?")) {
+
+                // cast to the pg extension interface
+                org.postgresql.PGStatement pgstmt = pstmt.unwrap(org.postgresql.PGStatement.class);
+
+                // on the third execution start using server side statements
+                pgstmt.setPrepareThreshold(3);
+
+                for (int i = 1; i <= 5; i++) {
+                    pstmt.setInt(1, i);
+                    boolean usingServerPrepare = pgstmt.isUseServerPrepare();
+                    ResultSet rs = pstmt.executeQuery();
+                    rs.next();
+                    System.out.println("Execution: " + i + ", Used server side: " + usingServerPrepare + ", Result: " + rs.getInt(1));
+                    rs.close();
+                }
+            }
+        }
+    }
+}
+```
+
+Expected output:
+
+| Execution | Used server side | Result |
+| --------- | ---------------- | ------ |
+| 1         | false            | 1      |
+| 2         | false            | 2      |
+| 3         | true             | 3      |
+| 4         | true             | 4      |
+| 5         | true             | 5      |
+
+### Threshold hierarchy
+
+The threshold can be set at three levels; child objects inherit the value from their parent unless overridden.
+
+```java Threshold hierarchy — URL → Connection → Statement
+// 1. Set on URL
+String url = "jdbc:postgresql://localhost:5432/test?prepareThreshold=3";
+
+Connection conn = DriverManager.getConnection(url, "test", "");
+org.postgresql.PGConnection pgconn = conn.unwrap(org.postgresql.PGConnection.class);
+System.out.println(pgconn.getPrepareThreshold()); // 3
+
+// 2. Inherited by statement
+PreparedStatement pstmt = conn.prepareStatement("SELECT ?");
+org.postgresql.PGStatement pgstmt = pstmt.unwrap(org.postgresql.PGStatement.class);
+System.out.println(pgstmt.getPrepareThreshold()); // 3
+
+// 3. Override on connection — new statements inherit the new value
+pgconn.setPrepareThreshold(5);
+PreparedStatement pstmt2 = conn.prepareStatement("SELECT ?");
+org.postgresql.PGStatement pgstmt2 = pstmt2.unwrap(org.postgresql.PGStatement.class);
+System.out.println(pgstmt2.getPrepareThreshold()); // 5
+```
+
+### Reusing PreparedStatement objects
+
+It is generally best to reuse the same `PreparedStatement` object. pgJDBC can also server-prepare statements across separate `connection.prepareStatement(...)` calls, but reusing the same object is more efficient.
+
+<CodeGroup>
+
+```java Less efficient — new object each time
+PreparedStatement ps = con.prepareStatement("select /*test*/ ?::int4");
+ps.setInt(1, 42);
+ps.executeQuery().close();
+ps.close();
+
+PreparedStatement ps = con.prepareStatement("select /*test*/ ?::int4");
+ps.setInt(1, 43);
+ps.executeQuery().close();
+ps.close();
+```
+
+```java More efficient — reuse the same object
+PreparedStatement ps = con.prepareStatement("select /*test*/ ?::int4");
+
+ps.setInt(1, 42);
+ps.executeQuery().close();
+
+ps.setInt(1, 43);
+ps.executeQuery().close();
+```
+
+</CodeGroup>
+
+## Statement cache
+
+Server-prepared statements consume memory on both the client and server. pgJDBC limits the cache per connection using two properties:
+
+| Property | Default | Description |
+|----------|---------|-------------|
+| `preparedStatementCacheQueries` | `256` | Maximum number of distinct query texts tracked by the driver. Set to `0` to disable. |
+| `preparedStatementCacheSizeMiB` | `5` | Maximum total size of the client-side cache in MiB per connection. Set to `0` to disable. |
+
+Only a subset of cached statements reach `prepareThreshold` and become server-prepared; others remain in the client cache only.
+
+## Deactivating server-side prepared statements
+
+Set `prepareThreshold=0` to disable server-side prepared statements entirely — for example when routing through a connection pooler that does not support them.
+
+```
+jdbc:postgresql://localhost:5432/test?prepareThreshold=0
+```
+
+## Binary transfer mode
+
+When server-side prepared statements are active, the driver enables binary transfer for supported built-in types. Binary transfer avoids text serialisation overhead and can significantly reduce CPU usage for numeric, timestamp, and other non-text types.
+
+Set `prepareThreshold=-1` to force server-side prepared statements **and** binary transfer immediately from the first execution:
+
+```
+jdbc:postgresql://localhost:5432/test?prepareThreshold=-1
+```
+
+## Corner cases
+
+<AccordionGroup>
+  <Accordion title="DDL and cached plan changes">
+    The Extended Query protocol avoids re-sending column metadata on each execution and uses the `BIND` message to specify output column format. This creates a problem when the schema changes between executions:
+
+    ```sql
+    SELECT * FROM mytable;
+    ALTER TABLE mytable ADD COLUMN newcol text;
+    SELECT * FROM mytable;   -- ERROR: cached plan must not change result type
+    ```
+
+    The second `SELECT` will fail with `cached plan must not change result type`, causing the whole transaction to fail.
+
+    **Recommendations:**
+    - Use explicit column names in `SELECT` lists instead of `SELECT *`.
+    - Avoid altering column types on tables referenced by active prepared statements.
+  </Accordion>
+
+  <Accordion title="DEALLOCATE ALL / DISCARD ALL">
+    Issuing `DEALLOCATE ALL` or `DISCARD ALL` on the server removes all server-side prepared statements. pgJDBC will then receive `prepared statement name is invalid` errors.
+
+    **Recommendations:**
+    - Issue `DEALLOCATE ALL` or `DISCARD ALL` as top-level commands (not inside PL/pgSQL). The driver recognises top-level `DEALLOCATE` / `DISCARD` commands and invalidates its client-side cache accordingly.
+    - Alternatively, reconnect. The cache is per-connection and is discarded on reconnect.
+  </Accordion>
+
+  <Accordion title="search_path changes">
+    Server-side prepared statements are linked to database object OIDs. If `search_path` changes between executions, the same SQL text may resolve to a different table:
+
+    ```sql
+    set search_path = 'app_v1';
+    SELECT * FROM mytable;
+    set search_path = 'app_v2';
+    SELECT * FROM mytable;  -- Does mytable mean app_v1.mytable or app_v2.mytable?
+    ```
+
+    pgJDBC tracks top-level `set search_path` commands and invalidates the prepared statement cache when it detects a change.
+
+    **Recommendations:**
+    - Avoid changing `search_path` frequently.
+    - Use top-level `set search_path ...` commands, not ones nested inside PL/pgSQL blocks (pgJDBC cannot detect those).
+  </Accordion>
+
+  <Accordion title="Re-execution of failed statements and autosave">
+    A single `cached plan must not change result type` error causes the entire transaction to fail. pgJDBC handles this in two ways:
+
+    1. **Outside a transaction:** pgJDBC re-executes the statement automatically, making the error invisible to the application.
+    2. **Inside a failed transaction:** pgJDBC cannot retry automatically. Set `autosave=conservative` to enable automatic savepoint-based rollback and retry for errors caused by invalid server-prepared statements.
+
+    ```
+    jdbc:postgresql://localhost:5432/test?autosave=conservative
+    ```
+
+    <Warning>
+      `autosave` can cause **severe** performance issues for long transactions. PostgreSQL is not optimised for transactions with many savepoints.
+    </Warning>
+  </Accordion>
+
+  <Accordion title="Bind placeholder datatypes and setNull">
+    The server optimises execution plans for the parameter types it receives. Using inconsistent types across executions forces the driver to invalidate and re-prepare the server-side statement.
+
+    A common mistake is using `setNull` with a type that differs from the type used in other executions:
+
+    ```java Anti-pattern — alternating bind types
+    PreparedStatement ps = con.prepareStatement("select id from rooms where ...");
+    if (param instanceof String) {
+        ps.setString(1, param);
+    } else if (param instanceof Integer) {
+        ps.setInt(1, ((Integer) param).intValue());
+    } else {
+        // Does it really matter which type of NULL to use?
+        // In fact, it does since data types specify which server-procedure to call
+        ps.setNull(1, Types.INTEGER);
+    }
+    ```
+
+    `setString` vs `setNull(..., Types.INTEGER)` produce different parameter types, forcing repeated re-prepare cycles.
+
+    **Recommendation:** Use a consistent type for each bind position in every execution, including `setNull`. Pass the same `Types.*` constant that matches the column type.
+  </Accordion>
+
+  <Accordion title="Replication connections">
+    PostgreSQL replication connections do not permit server-side prepared statements. pgJDBC automatically falls back to simple queries when the `replication` connection property is set.
+  </Accordion>
+</AccordionGroup>
+
+<Note>
+  The `Statement` object is bound to its `Connection`. Sharing the same `Statement` or `Connection` across concurrent threads (except for `cancel()` and `close()`) is unsafe. Prefer closing the statement rather than caching it.
+</Note>

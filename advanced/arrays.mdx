@@ -1,0 +1,180 @@
+---
+title: "Working with Arrays"
+description: "Create, send, and read PostgreSQL array types from Java using the pgjdbc driver."
+keywords: ["arrays", "array types", "createArrayOf", "setArray", "pgjdbc", "jdbc", "postgresql"]
+---
+
+PostgreSQL provides robust support for array data types as column types, function arguments, and criteria in `WHERE` clauses. The pgjdbc driver exposes several APIs for creating and consuming arrays.
+
+## Creating arrays
+
+### From Object arrays — `Connection.createArrayOf()`
+
+The standard JDBC method [`Connection.createArrayOf(String, Object[])`](https://docs.oracle.com/javase/8/docs/api/java/sql/Connection.html#createArrayOf-java.lang.String-java.lang.Object:A-) creates a [`java.sql.Array`](https://docs.oracle.com/javase/8/docs/api/java/sql/Array.html) from `Object[]` instances, including both primitive and object multi-dimensional arrays:
+
+```java
+String[] names = {"Alice", "Bob", "Carol"};
+java.sql.Array sqlArray = conn.createArrayOf("varchar", names);
+```
+
+### From primitive arrays — `PGConnection.createArrayOf()`
+
+The pgjdbc-specific method `org.postgresql.PGConnection.createArrayOf(String, Object)` adds support for primitive array types (e.g., `int[]`, `double[]`):
+
+```java
+int[] ids = {1, 2, 3};
+PGConnection pgConn = conn.unwrap(org.postgresql.PGConnection.class);
+java.sql.Array sqlArray = pgConn.createArrayOf("int4", ids);
+```
+
+## Inserting arrays with PreparedStatement
+
+Use [`PreparedStatement.setArray(int, Array)`](https://docs.oracle.com/javase/8/docs/api/java/sql/PreparedStatement.html#setArray-int-java.sql.Array-) to bind an array parameter:
+
+```java
+String[] tags = {"jdbc", "postgresql", "java"};
+java.sql.Array sqlArray = conn.createArrayOf("text", tags);
+
+try (PreparedStatement ps = conn.prepareStatement(
+        "INSERT INTO articles (title, tags) VALUES (?, ?)")) {
+    ps.setString(1, "Getting Started");
+    ps.setArray(2, sqlArray);
+    ps.executeUpdate();
+}
+```
+
+## Binary representation support
+
+The following Java types support **binary transfer** when used with `PreparedStatement.setObject()`, which is more efficient than text-mode encoding:
+
+| Java type | PostgreSQL type | Default PostgreSQL type |
+|---|---|---|
+| `short[]`, `Short[]` | `int2[]` | `int2[]` |
+| `int[]`, `Integer[]` | `int4[]` | `int4[]` |
+| `long[]`, `Long[]` | `int8[]` | `int8[]` |
+| `float[]`, `Float[]` | `float4[]` | `float4[]` |
+| `double[]`, `Double[]` | `float8[]` | `float8[]` |
+| `boolean[]`, `Boolean[]` | `bool[]` | `bool[]` |
+| `String[]` | `varchar[]`, `text[]` | `varchar[]` |
+| `byte[][]` | `bytea[]` | `bytea[]` |
+
+<Tip>
+Using `PreparedStatement.setObject()` with primitive array types (e.g., `int[]`) takes advantage of binary transfer, which is faster than going through `createArrayOf()` when server-prepared statements are active.
+</Tip>
+
+## Reading arrays from ResultSet
+
+Call `ResultSet.getArray()` and then cast or convert the result:
+
+```java
+try (PreparedStatement ps = conn.prepareStatement(
+        "SELECT tags FROM articles WHERE title = ?")) {
+    ps.setString(1, "Getting Started");
+    try (ResultSet rs = ps.executeQuery()) {
+        while (rs.next()) {
+            java.sql.Array arr = rs.getArray("tags");
+            String[] tags = (String[]) arr.getArray();
+            for (String tag : tags) {
+                System.out.println(tag);
+            }
+            arr.free();
+        }
+    }
+}
+```
+
+<Note>
+Call `arr.free()` when you are finished with the `java.sql.Array` object to release any resources held by the driver.
+</Note>
+
+## Complete example
+
+<CodeGroup>
+
+```java ArrayExample.java
+import java.sql.*;
+
+public class ArrayExample {
+    public static void main(String[] args) throws Exception {
+        String url = "jdbc:postgresql://localhost:5432/test";
+        try (Connection conn = DriverManager.getConnection(url, "test", "")) {
+
+            // Create table
+            try (Statement stmt = conn.createStatement()) {
+                stmt.execute(
+                    "CREATE TEMP TABLE scores (player text, results int[])");
+            }
+
+            // Insert using Connection.createArrayOf (Object[])
+            Integer[] results = {95, 87, 102, 78};
+            java.sql.Array sqlArray = conn.createArrayOf("int4", results);
+
+            try (PreparedStatement ps = conn.prepareStatement(
+                    "INSERT INTO scores (player, results) VALUES (?, ?)")) {
+                ps.setString(1, "Alice");
+                ps.setArray(2, sqlArray);
+                ps.executeUpdate();
+            }
+
+            // Insert using PGConnection.createArrayOf (primitive array)
+            int[] primitiveResults = {110, 95, 88};
+            org.postgresql.PGConnection pgConn =
+                conn.unwrap(org.postgresql.PGConnection.class);
+            java.sql.Array primitiveArray =
+                pgConn.createArrayOf("int4", primitiveResults);
+
+            try (PreparedStatement ps = conn.prepareStatement(
+                    "INSERT INTO scores (player, results) VALUES (?, ?)")) {
+                ps.setString(1, "Bob");
+                ps.setArray(2, primitiveArray);
+                ps.executeUpdate();
+            }
+
+            // Read arrays back
+            try (Statement stmt = conn.createStatement();
+                 ResultSet rs = stmt.executeQuery(
+                     "SELECT player, results FROM scores")) {
+                while (rs.next()) {
+                    String player = rs.getString("player");
+                    java.sql.Array arr = rs.getArray("results");
+                    int[] scores = (int[]) arr.getArray();
+                    arr.free();
+
+                    System.out.print(player + ": ");
+                    for (int score : scores) {
+                        System.out.print(score + " ");
+                    }
+                    System.out.println();
+                }
+            }
+        }
+    }
+}
+```
+
+</CodeGroup>
+
+<Accordion title="Multi-dimensional arrays">
+
+Both `Connection.createArrayOf()` and `PGConnection.createArrayOf()` support multi-dimensional arrays. Pass a Java multi-dimensional array and the appropriate PostgreSQL type:
+
+```java
+int[][] matrix = {{1, 2, 3}, {4, 5, 6}};
+java.sql.Array sqlMatrix = conn.createArrayOf("int4", matrix);
+
+try (PreparedStatement ps = conn.prepareStatement(
+        "INSERT INTO matrices (data) VALUES (?)")) {
+    ps.setArray(1, sqlMatrix);
+    ps.executeUpdate();
+}
+```
+
+When reading back, cast to the corresponding multi-dimensional Java array type:
+
+```java
+java.sql.Array arr = rs.getArray("data");
+int[][] result = (int[][]) arr.getArray();
+arr.free();
+```
+
+</Accordion>

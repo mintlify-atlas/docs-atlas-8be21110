@@ -1,0 +1,160 @@
+---
+title: "Changelog"
+description: "Notable changes to the PostgreSQL JDBC Driver since version 42.0.0."
+keywords: ["pgjdbc", "changelog", "release notes", "versions"]
+---
+
+Notable changes since version 42.0.0. For the complete history, see the [full changelog on GitHub](https://github.com/pgjdbc/pgjdbc/blob/master/pgjdbc/CHANGELOG.md).
+
+## 42.7.10 (2026-02-11)
+
+### Changed
+- Migrate to Shadow 9.
+- Style fixes for CheckStyle compliance (empty lines before javadoc, lambda argument indentation).
+- Add `autosave=always|never|conservative` and `cleanupSavepoints=true|false` to randomized CI jobs.
+
+### Fixed
+- Fix non-standard strings failing test for PostgreSQL 19.
+- Fix small issues in `ConnectionFactoryImpl`.
+- Process pending responses before fastpath to avoid protocol errors.
+- Documentation typo fixes in `use.md` and `datasource.md`.
+
+### Reverted
+- Revert "make all Calendar instances proleptic Gregorian" (introduced in 42.7.9).
+
+---
+
+## 42.7.9 (2026-01-14)
+
+### Added
+- Add `queryTimeout` as a connection property ([PR #3705](https://github.com/pgjdbc/pgjdbc/pull/3705)).
+- Add `PEMKeyManager` to handle PEM-based certificates and keys ([PR #3700](https://github.com/pgjdbc/pgjdbc/pull/3700)).
+
+### Changed
+- Optimize `PGInterval.getValue()` by replacing `String.format` with `StringBuilder`.
+- Update `quoteReturningIdentifiers` default value in documentation.
+- Security: Use `Class.forName(name, initialize, classloader)` for all user-supplied class loading.
+
+### Fixed
+- Fix incorrect `pg_stat_replication.reply_time` calculation.
+- Fix: close temporary LOB descriptors used internally in `PreparedStatement.setBlob`.
+- Fix: `PGXAConnection.prepare(Xid)` should return `XA_RDONLY` if the connection is read-only.
+- Fix: make all Calendar instances proleptic Gregorian.
+- Fix: avoid memory leaks in Java ≤ 21 caused by `Thread.inheritedAccessControlContext`.
+- Fix: pgjdbc cannot decode numeric arrays containing special numbers like `NaN`.
+- Fix: use `ssl_is_used()` to check for SSL connection status.
+
+---
+
+## 42.7.8 (2025-09-18)
+
+### Added
+- Add configurable boolean-to-numeric conversion for `ResultSet` getters (`convertBooleanToNumeric` property). When enabled, boolean `t` returns 1 and `f` returns 0 for numeric getters ([PR #3796](https://github.com/pgjdbc/pgjdbc/pull/3796)).
+
+### Changed
+- Performance: remove `QUERY_ONESHOT` flag when calling `getMetaData`.
+- Performance: use `BufferedInputStream` with `FileInputStream`.
+- Performance: enable server-prepared statements for `DatabaseMetaData`.
+
+### Fixed
+- Fix: avoid `NullPointerException` when cancelling a query if the cancel key is not yet known.
+- Fix: incorrect timezone handling in `TimestampTest`.
+- Fix: array dimension calculation in `PgArray.calcRemainingDataLength`.
+- Fix: ensure `getImportedExportedKeys` returns columns in consistent order.
+- Fix: add `SELF_REFERENCING_COL_NAME` to `getTables` `ResultSetMetaData` to prevent `NullPointerException`.
+- Fix: unable to open replication connection to PostgreSQL servers older than version 12.
+- Fix: avoid closing a statement caused by the driver's internal `ResultSet.close()`.
+- Fix: return empty metadata for empty catalog names.
+- Fix: incorrect class comparison in `PGXmlFactoryFactory` validation.
+
+---
+
+## 42.7.7 (2025-06-10)
+
+### Security
+- **CVE-2025-49146**: Fix `channel binding required` handling to reject non-SASL authentication methods. Previously, `channelBinding=require` was silently ignored for non-SASL authentication, creating a false sense of security. The fix ensures connections using non-SASL authentication are rejected when channel binding is required. See the [security advisory](https://github.com/pgjdbc/pgjdbc/security/advisories/GHSA-hq9p-pm7w-8p54). Reported by George MacKerron.
+
+### Added
+- Add `ChannelBindingRequiredTest` to verify proper enforcement of channel binding settings.
+
+---
+
+## 42.7.6
+
+### Added
+- Enhance `DatabaseMetadata.getIndexInfo()` to include index comments as the `REMARKS` property.
+
+### Fixed
+- Fix handling of PostgreSQL protocol 3.2 and wider cancel keys.
+- Fix `PgConnection.abort()` for Java 24 compatibility.
+- Fix `ArrayIndexOutOfBounds` when writing large objects over GSS-encrypted connections.
+- Fix `isValid()` to use `executeWithFlags` instead of `execute`.
+- Fix `EOFException` on `PreparedStatement.toString()` when a `bytea` parameter is unset (since 42.7.4).
+- Fix: add the ability to turn off automatic LSN flush in replication streams.
+- Fix: `send extra_float_digits=3` for PostgreSQL 12+.
+
+### Changed
+- Updated to use Java 21 as the default build JDK.
+- Updated to use a single simple query for all startup parameters.
+- Undeprecated Fastpath API.
+
+---
+
+## 42.7.5 (2025-01-14)
+
+### Fixed
+- Regression fix: revert a change introduced in 42.7.4 that caused issues.
+- Fix `PgDatabaseMetaData` catalog parameter and return value handling.
+- Fix: support default GSS credentials in the Java PostgreSQL client.
+- Fix: return only transactions accessible by `current_user` in `XAResource.recover`.
+- Fix: do not force `extra_float_digits` for PostgreSQL ≥ 12.
+- Fix: exclude "include columns" from the primary key list.
+- Fix: clear `thisRow` and `rowBuffer` on `ResultSet.close()` to prevent memory retention.
+- Fix: support `getObject(int, byte[].class)` for `bytea` columns.
+
+---
+
+## 42.7.4 (2024-08-22)
+
+### Added
+- Support SCRAM channel binding (`channelBinding` property, requires SCRAM dependency 3.1+).
+- Implement direct SSL ALPN connections (`sslnegotiation=direct` for PostgreSQL 17+).
+- Add Korean translation.
+
+### Fixed
+- Fix: `PgInterval` case-insensitive string parsing.
+- Fix: support `Infinity::numeric` values in `ResultSet.getObject`.
+- Fix: support `bytea` in `preferQueryMode=simple`.
+- Fix: `TIME '24:00'` to `LocalTime` conversion in binary mode.
+- Fix: return `-1` as update count for stored procedure calls.
+- Fix: support `PreparedStatement.setBlob(1, Blob)` for LOBs that return `-1` for length.
+
+### Changed
+- Performance: replace `BufferedOutputStream` with unsynchronized `PgBufferedOutputStream`; allow configuring Java and `SO_SNDBUF` buffer sizes independently (`maxSendBufferSize` property).
+- Performance: speed up `getDate` by parsing bytes instead of strings.
+
+---
+
+## 42.7.3 (2024-04-14)
+
+### Fixed
+- Fix: boolean types not handled in `SimpleQuery` mode (also adds `UUID` support in simple mode).
+- Fix: `NoSuchMethodError` on `ByteBuffer.position()` when running on Java 8.
+
+---
+
+## 42.7.2 (2024-02-21)
+
+### Security
+- **CVE-2024-1597**: Fix SQL injection via line comment generation in `SimpleQuery` mode. When a numeric placeholder was preceded by `-` and followed by a string placeholder, setting the numeric parameter to a negative value created a line comment that could suppress the rest of the query. Fixed in 42.7.2, 42.6.1, 42.5.5, 42.4.4, 42.3.9, 42.2.28. Reported by Paul Gerste. See the [security advisory](https://github.com/pgjdbc/pgjdbc/security/advisories/GHSA-24rp-q3w6-vc56).
+
+### Added
+- Add `PasswordUtil` for client-side password encryption.
+
+### Changed
+- Use simple query for `isValid()` to reduce protocol overhead.
+- Performance: avoid autoboxing of bind indexes.
+
+---
+
+For the complete history of all releases including 42.0.x through 42.6.x, see the [full CHANGELOG on GitHub](https://github.com/pgjdbc/pgjdbc/blob/master/pgjdbc/CHANGELOG.md).

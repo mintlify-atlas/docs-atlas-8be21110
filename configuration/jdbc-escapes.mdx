@@ -1,0 +1,183 @@
+---
+title: "JDBC Escape Syntax"
+description: "Use portable JDBC escape sequences for dates, times, outer joins, and scalar functions with the PostgreSQL JDBC Driver."
+keywords: ["JDBC escapes", "escape syntax", "scalar functions", "date escapes", "outer join", "pgjdbc"]
+---
+
+The JDBC specification acknowledges that some vendor-specific SQL may be required for certain database features.
+To help developers write portable JDBC applications across multiple database products, JDBC defines a special escape syntax.
+The driver translates these escape sequences into native PostgreSQL SQL.
+
+## Enabling and disabling escape processing
+
+Escape processing is enabled by default. You can disable it per statement:
+
+```java
+statement.setEscapeProcessing(false);
+```
+
+To preview how an escape sequence will be translated without executing it, use `Connection.nativeSQL()`:
+
+```java
+String nativeSql = connection.nativeSQL("SELECT {fn week({d '2005-01-24'})}");
+// Returns: SELECT extract(week from DATE '2005-01-24')
+```
+
+## Example
+
+The following two queries are equivalent. The first uses portable JDBC escape syntax; the second uses PostgreSQL-specific SQL:
+
+<CodeGroup>
+
+```java Portable (JDBC escape syntax)
+ResultSet rs = st.executeQuery("SELECT {fn week({d '2005-01-24'})}");
+```
+
+```java PostgreSQL native SQL
+ResultSet rs = st.executeQuery("SELECT extract(week from DATE '2005-01-24')");
+```
+
+</CodeGroup>
+
+## Date and time escapes
+
+The JDBC specification defines escapes for date, time, and timestamp literals.
+
+| Escape | Translates to | Notes |
+|---|---|---|
+| `{d 'yyyy-mm-dd'}` | `DATE 'yyyy-mm-dd'` | Date literal |
+| `{t 'hh:mm:ss'}` | `TIME 'hh:mm:ss'` | Time literal |
+| `{ts 'yyyy-mm-dd hh:mm:ss.f...'}` | `TIMESTAMP 'yyyy-mm-dd hh:mm:ss.f'` | Fractional seconds are optional |
+
+## LIKE escape character
+
+You can specify which escape character to use in `LIKE` comparisons to protect the wildcard characters `%` and `_`:
+
+```
+{escape 'escape-character'}
+```
+
+The driver supports this only at the end of the comparison expression. For example, using `|` as the escape character to protect `_`:
+
+```java
+rs = stmt.executeQuery("select str2 from comparisontest where str1 like '|_abcd' {escape '|'} ");
+```
+
+## Outer join syntax
+
+You can express outer joins using the following escape:
+
+```
+{oj table (LEFT|RIGHT|FULL) OUTER JOIN (table | outer-join) ON search-condition}
+```
+
+Example:
+
+```java
+ResultSet rs = stmt.executeQuery("select * from {oj a left outer join b on (a.i=b.i)} ");
+```
+
+## Scalar functions
+
+Scalar functions are invoked with the escape syntax `{fn function_name(arguments)}`. The driver supports nesting and mixing of escaped functions and escaped values.
+
+<Note>
+  Some functions in the tables below are translated but reported as not supported because they duplicate or reorder their arguments. This is harmless for literal values or column references but will cause problems with prepared statements, because the translated SQL requires more parameters than the original.
+
+  For example, `{fn right(?,?)}` translates to `substring(? from (length(?)+1-?))` — three bind placeholders instead of two.
+</Note>
+
+<AccordionGroup>
+  <Accordion title="Numeric functions">
+
+| Function | Reported as supported | Translation | Comments |
+|---|---|---|---|
+| `abs(arg1)` | yes | `abs(arg1)` | |
+| `acos(arg1)` | yes | `acos(arg1)` | |
+| `asin(arg1)` | yes | `asin(arg1)` | |
+| `atan(arg1)` | yes | `atan(arg1)` | |
+| `atan2(arg1, arg2)` | yes | `atan2(arg1, arg2)` | |
+| `ceiling(arg1)` | yes | `ceil(arg1)` | |
+| `cos(arg1)` | yes | `cos(arg1)` | |
+| `cot(arg1)` | yes | `cot(arg1)` | |
+| `degrees(arg1)` | yes | `degrees(arg1)` | |
+| `exp(arg1)` | yes | `exp(arg1)` | |
+| `floor(arg1)` | yes | `floor(arg1)` | |
+| `log(arg1)` | yes | `ln(arg1)` | |
+| `log10(arg1)` | yes | `log(arg1)` | |
+| `mod(arg1, arg2)` | yes | `mod(arg1, arg2)` | |
+| `pi(arg1)` | yes | `pi(arg1)` | |
+| `power(arg1, arg2)` | yes | `pow(arg1, arg2)` | |
+| `radians(arg1)` | yes | `radians(arg1)` | |
+| `rand()` | yes | `random()` | |
+| `rand(arg1)` | yes | `setseed(arg1)*0+random()` | The seed is initialized with the given argument and a new random value is returned. |
+| `round(arg1, arg2)` | yes | `round(arg1, arg2)` | |
+| `sign(arg1)` | yes | `sign(arg1)` | |
+| `sin(arg1)` | yes | `sin(arg1)` | |
+| `sqrt(arg1)` | yes | `sqrt(arg1)` | |
+| `tan(arg1)` | yes | `tan(arg1)` | |
+| `truncate(arg1, arg2)` | yes | `trunc(arg1, arg2)` | |
+
+  </Accordion>
+
+  <Accordion title="String functions">
+
+| Function | Reported as supported | Translation | Comments |
+|---|---|---|---|
+| `ascii(arg1)` | yes | `ascii(arg1)` | |
+| `char(arg1)` | yes | `chr(arg1)` | |
+| `concat(arg1, arg2...)` | yes | `(arg1\|\|arg2...)` | The JDBC specification only requires the two-argument version, but supporting more arguments was straightforward. |
+| `insert(arg1, arg2, arg3, arg4)` | no | `overlay(arg1 placing arg4 from arg2 for arg3)` | Not supported since it changes the order of the arguments, which can be a problem with prepared statements. |
+| `lcase(arg1)` | yes | `lower(arg1)` | |
+| `left(arg1, arg2)` | yes | `substring(arg1 for arg2)` | |
+| `length(arg1)` | yes | `length(trim(trailing from arg1))` | |
+| `locate(arg1, arg2)` | no | `position(arg1 in arg2)` | |
+| `locate(arg1, arg2, arg3)` | no | `(arg2*sign(position(arg1 in substring(arg2 from arg3))+position(arg1 in substring(arg2 from arg3)))` | Not supported since the three-argument version duplicates and changes the order of the arguments. |
+| `ltrim(arg1)` | yes | `trim(leading from arg1)` | |
+| `repeat(arg1, arg2)` | yes | `repeat(arg1, arg2)` | |
+| `replace(arg1, arg2, arg3)` | yes | `replace(arg1, arg2, arg3)` | Only reported as supported by 7.3 and above servers. |
+| `right(arg1, arg2)` | no | `substring(arg1 from (length(arg1)+1-arg2))` | Not supported since `arg2` is duplicated. |
+| `rtrim(arg1)` | yes | `trim(trailing from arg1)` | |
+| `space(arg1)` | yes | `repeat(' ', arg1)` | |
+| `substring(arg1, arg2)` | yes | `substr(arg1, arg2)` | |
+| `substring(arg1, arg2, arg3)` | yes | `substr(arg1, arg2, arg3)` | |
+| `ucase(arg1)` | yes | `upper(arg1)` | |
+| `soundex(arg1)` | no | `soundex(arg1)` | Not supported since it requires the `fuzzystrmatch` contrib module. |
+| `difference(arg1, arg2)` | no | `difference(arg1, arg2)` | Not supported since it requires the `fuzzystrmatch` contrib module. |
+
+  </Accordion>
+
+  <Accordion title="Date and time functions">
+
+| Function | Reported as supported | Translation | Comments |
+|---|---|---|---|
+| `curdate()` | yes | `current_date` | |
+| `curtime()` | yes | `current_time` | |
+| `dayname(arg1)` | yes | `to_char(arg1, 'Day')` | |
+| `dayofmonth(arg1)` | yes | `extract(day from arg1)` | |
+| `dayofweek(arg1)` | yes | `extract(dow from arg1)+1` | 1 is added to produce the expected 1–7 range. |
+| `dayofyear(arg1)` | yes | `extract(doy from arg1)` | |
+| `hour(arg1)` | yes | `extract(hour from arg1)` | |
+| `minute(arg1)` | yes | `extract(minute from arg1)` | |
+| `month(arg1)` | yes | `extract(month from arg1)` | |
+| `monthname(arg1)` | yes | `to_char(arg1, 'Month')` | |
+| `now()` | yes | `now()` | |
+| `quarter(arg1)` | yes | `extract(quarter from arg1)` | |
+| `second(arg1)` | yes | `extract(second from arg1)` | |
+| `week(arg1)` | yes | `extract(week from arg1)` | |
+| `year(arg1)` | yes | `extract(year from arg1)` | |
+| `timestampadd(argIntervalType, argCount, argTimeStamp)` | yes | `((interval according to argIntervalType and argCount)+argTimeStamp)` | `SQL_TSI_FRAC_SECOND` is not implemented since the backend does not support it. |
+| `timestampdiff(argIntervalType, argTimeStamp1, argTimeStamp2)` | no | `extract((interval according to argIntervalType) from argTimeStamp2-argTimeStamp1)` | Only `SQL_TSI_FRAC_SECOND`, `SQL_TSI_FRAC_MINUTE`, `SQL_TSI_FRAC_HOUR`, and `SQL_TSI_FRAC_DAY` are supported. |
+
+  </Accordion>
+
+  <Accordion title="Miscellaneous functions">
+
+| Function | Reported as supported | Translation | Comments |
+|---|---|---|---|
+| `database()` | yes | `current_database()` | Only reported as supported by 7.3 and above servers. |
+| `ifnull(arg1, arg2)` | yes | `coalesce(arg1, arg2)` | |
+| `user()` | yes | `user` | |
+
+  </Accordion>
+</AccordionGroup>

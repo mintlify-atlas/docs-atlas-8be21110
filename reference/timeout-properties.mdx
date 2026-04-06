@@ -1,0 +1,187 @@
+---
+title: "Timeout and Network Properties"
+description: "Reference for all timeout, socket, and network configuration properties in the PostgreSQL JDBC Driver."
+keywords: ["pgjdbc", "timeout", "connectTimeout", "socketTimeout", "queryTimeout", "TCP", "network"]
+---
+
+The PostgreSQL JDBC Driver provides fine-grained control over connection timeouts, socket behavior, and network buffer sizing. Most timeout values are specified in seconds; exceptions are noted.
+
+<Note>
+Most timeout properties accept a maximum value of **2,147,484 seconds** (approximately 24.8 days). Values exceeding this are silently clamped to the maximum.
+</Note>
+
+## Connection timeouts
+
+<ParamField path="connectTimeout" type="integer" default="10">
+  Timeout in seconds for socket connect operations. If establishing the TCP connection to the server takes longer than this value, the connection attempt is aborted.
+
+  A value of `0` disables the timeout (wait indefinitely).
+
+  ```java
+  props.setProperty("connectTimeout", "30");
+  ```
+</ParamField>
+
+<ParamField path="loginTimeout" type="integer" default="0">
+  Maximum time in seconds to wait for a full database connection to be established, including authentication and initial setup. A value of `0` means no timeout.
+
+  This differs from `connectTimeout` in that it covers the entire login process, not just the TCP handshake.
+
+  ```java
+  props.setProperty("loginTimeout", "60");
+  ```
+</ParamField>
+
+<ParamField path="socketTimeout" type="integer" default="0">
+  Timeout in seconds for socket read operations. If reading a response from the server takes longer than this value, the connection is closed.
+
+  A value of `0` disables the timeout. This can act as a brute-force global query timeout and helps detect broken network connections.
+
+  <Warning>
+  Setting `socketTimeout` too low can cause spurious disconnections during legitimate long-running queries. Consider using `queryTimeout` for per-statement control instead.
+  </Warning>
+
+  ```java
+  props.setProperty("socketTimeout", "120");
+  ```
+</ParamField>
+
+<ParamField path="queryTimeout" type="integer" default="0">
+  Default timeout in seconds for query execution. Applied to statements that have not been explicitly configured via `Statement.setQueryTimeout()`. A value of `0` means no timeout.
+
+  <Tip>
+  Use `Statement.setQueryTimeout()` for per-statement control. Use this property to set a connection-wide default.
+  </Tip>
+
+  ```java
+  props.setProperty("queryTimeout", "30");
+  ```
+</ParamField>
+
+<ParamField path="cancelSignalTimeout" type="integer" default="10">
+  Timeout in seconds for sending a cancel command. Cancel messages are sent out-of-band over a separate connection, which itself can stall. This property controls the connect and socket timeout for that cancel connection.
+
+  ```java
+  props.setProperty("cancelSignalTimeout", "5");
+  ```
+</ParamField>
+
+## Protocol-level timeouts
+
+<ParamField path="sslResponseTimeout" type="integer" default="5000">
+  Socket timeout in **milliseconds** to wait for the server's response to an SSL upgrade request. If this value is greater than `connectTimeout`, `connectTimeout` is used instead.
+
+  ```java
+  props.setProperty("sslResponseTimeout", "3000");
+  ```
+</ParamField>
+
+<ParamField path="gssResponseTimeout" type="integer" default="5000">
+  Socket timeout in **milliseconds** to wait for the server's response to a GSS (Kerberos) encrypted connection request. If this value is greater than `connectTimeout`, `connectTimeout` is used instead.
+
+  ```java
+  props.setProperty("gssResponseTimeout", "3000");
+  ```
+</ParamField>
+
+## TCP configuration
+
+<ParamField path="tcpKeepAlive" type="boolean" default="false">
+  Enable or disable TCP keep-alive probes. When enabled, the OS periodically sends keep-alive packets on idle connections to detect dead peers.
+
+  <Tip>
+  Enable this for long-lived idle connections to detect network failures early and prevent firewall-induced connection drops.
+  </Tip>
+
+  ```java
+  props.setProperty("tcpKeepAlive", "true");
+  ```
+</ParamField>
+
+<ParamField path="tcpNoDelay" type="boolean" default="true">
+  Enable or disable TCP no-delay (Nagle's algorithm). When `true` (the default), packets are sent immediately without buffering small writes. Disabling this may improve throughput for bulk operations at the cost of latency.
+
+  ```java
+  props.setProperty("tcpNoDelay", "false");
+  ```
+</ParamField>
+
+## Socket buffer sizes
+
+<ParamField path="sendBufferSize" type="integer" default="-1">
+  Sets the `SO_SNDBUF` socket option (the OS-level send buffer size in bytes). Use `-1` to leave at the OS default.
+
+  ```java
+  props.setProperty("sendBufferSize", "131072");
+  ```
+</ParamField>
+
+<ParamField path="maxSendBufferSize" type="integer" default="65536">
+  Maximum bytes buffered by the driver before flushing to the backend. The effective buffer size used is:
+
+  ```
+  min(maxSendBufferSize, max(8192, SO_SNDBUF))
+  ```
+
+  Increase this for workloads with large batch operations to reduce round trips.
+
+  ```java
+  props.setProperty("maxSendBufferSize", "131072");
+  ```
+</ParamField>
+
+<ParamField path="receiveBufferSize" type="integer" default="-1">
+  Sets the `SO_RCVBUF` socket option (the OS-level receive buffer size in bytes). Use `-1` to leave at the OS default.
+
+  ```java
+  props.setProperty("receiveBufferSize", "131072");
+  ```
+</ParamField>
+
+## Multi-host configuration
+
+<ParamField path="hostRecheckSeconds" type="integer" default="10">
+  Duration in seconds to cache the known state of a host (primary, secondary, unavailable) in a JVM-wide cache. After this period, the next connection attempt re-checks the host's state.
+
+  Relevant when using `targetServerType` with multiple hosts for high availability.
+
+  ```java
+  props.setProperty("hostRecheckSeconds", "30");
+  ```
+</ParamField>
+
+## System property
+
+<ParamField path="pgjdbc.config.cleanup.thread.ttl" type="long" default="30000">
+  Set as a JVM system property (not a connection property). Controls how long in **milliseconds** the driver's internal cleanup thread remains alive when there is nothing to clean up.
+
+  The cleanup thread monitors connections that were not explicitly closed by the application.
+
+  ```bash
+  java -Dpgjdbc.config.cleanup.thread.ttl=60000 -jar myapp.jar
+  ```
+</ParamField>
+
+## Timeout interaction
+
+The following diagram shows how the different timeouts apply during connection establishment:
+
+```
+TCP connect → [connectTimeout]
+    ↓
+SSL negotiation → [sslResponseTimeout]
+    ↓
+GSS negotiation → [gssResponseTimeout]
+    ↓
+Authentication + startup → [loginTimeout]
+    ↓
+Connected
+    ↓
+Query execution → [queryTimeout] (per statement)
+    ↓
+Socket reads → [socketTimeout]
+```
+
+<Note>
+`loginTimeout` is a global limit covering the entire login sequence. If `connectTimeout` is larger, the login sequence may be cut short by `loginTimeout` before the TCP connect timeout fires.
+</Note>

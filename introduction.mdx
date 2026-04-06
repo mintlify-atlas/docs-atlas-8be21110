@@ -1,0 +1,88 @@
+---
+title: "Introduction"
+description: "PostgreSQL JDBC Driver (PgJDBC) — a pure Java, Type 4 driver for connecting Java applications to PostgreSQL using the native PostgreSQL network protocol."
+---
+
+The PostgreSQL JDBC Driver (PgJDBC) allows Java programs to connect to a PostgreSQL database using standard, database-independent Java code. It is an open-source JDBC driver written in pure Java (Type 4) and communicates directly in the PostgreSQL native network protocol — no native libraries required.
+
+## Key features
+
+<CardGroup cols={3}>
+  <Card title="Pure Java" icon="java">
+    No native code or libraries. Runs anywhere a JVM runs, with no platform-specific installation.
+  </Card>
+  <Card title="Type 4 driver" icon="plug">
+    Communicates directly with PostgreSQL using the native wire protocol — no ODBC bridge or middleware required.
+  </Card>
+  <Card title="JDBC 4.2 compliant" icon="check">
+    Full implementation of the JDBC 4.2 specification on Java 8 and above.
+  </Card>
+  <Card title="SSL/TLS security" icon="lock">
+    Configurable SSL modes from `prefer` to `verify-full`, with certificate validation and client certificates.
+  </Card>
+  <Card title="Connection pooling" icon="database">
+    Built-in `DataSource`, `ConnectionPoolDataSource`, and `XADataSource` implementations ready to use.
+  </Card>
+  <Card title="Server-side prepared statements" icon="server">
+    Automatic server-side statement caching with binary transfer for high-performance query execution.
+  </Card>
+</CardGroup>
+
+## Supported versions
+
+| Component | Supported versions |
+|---|---|
+| PostgreSQL | 8.4 and higher (9.1+ recommended) |
+| Java | 8 (JDBC 4.2) and above |
+| JDBC spec | 4.2 |
+
+<Note>
+  PgJDBC versions since 42.8.0 are not guaranteed to work with PostgreSQL older than 9.1. Regression tests run against all PostgreSQL versions since 9.1. For the best experience, use PostgreSQL 9.1 or later.
+</Note>
+
+## Driver and DataSource classes
+
+PgJDBC provides implementations for all standard JDBC interfaces:
+
+| Interface | Implementation class |
+|---|---|
+| `java.sql.Driver` | `org.postgresql.Driver` |
+| `javax.sql.DataSource` | `org.postgresql.ds.PGSimpleDataSource` |
+| `javax.sql.ConnectionPoolDataSource` | `org.postgresql.ds.PGConnectionPoolDataSource` |
+| `javax.sql.XADataSource` | `org.postgresql.xa.PGXADataSource` |
+
+## Connection URL format
+
+The driver recognizes JDBC URLs of the following form:
+
+```
+jdbc:postgresql:[//host[:port]/][database][?property1=value1[&property2=value2]...]
+```
+
+Common URL patterns:
+
+```
+jdbc:postgresql:database
+jdbc:postgresql://host/database
+jdbc:postgresql://host:port/database
+jdbc:postgresql://?service=myservice
+```
+
+- **`host`** — Server address (DNS name or IP). Defaults to `localhost`. Use square brackets for IPv6: `[::1]`.
+- **`port`** — Server port. Defaults to `5432`.
+- **`database`** — Database name. Defaults to the connecting user's name.
+
+<Tip>
+  Any reserved URL characters (`/`, `:`, `@`, `[`, `]`, `&`, `#`, `=`, `?`, space) appearing in connection parameters must be percent-encoded per [RFC 3986](https://www.rfc-editor.org/rfc/rfc3986#section-2).
+</Tip>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Connect to PostgreSQL and run your first query in minutes.
+  </Card>
+  <Card title="Setting up the JDBC driver" icon="download" href="/setup">
+    Add the driver via Maven, Gradle, or direct JAR download.
+  </Card>
+</CardGroup>

@@ -1,0 +1,316 @@
+---
+title: "PGConnection Interface"
+description: "Reference for the org.postgresql.PGConnection interface, which exposes PostgreSQL-specific extensions to java.sql.Connection."
+keywords: ["pgjdbc", "PGConnection", "PostgreSQL extensions", "notifications", "replication", "CopyManager"]
+---
+
+`org.postgresql.PGConnection` is a PostgreSQL-specific extension to `java.sql.Connection`. All connections returned by the PostgreSQL JDBC driver implement this interface, which exposes APIs not available in standard JDBC: COPY operations, logical replication, large objects, LISTEN/NOTIFY, and server parameter status.
+
+## Obtaining PGConnection
+
+Use `Connection.unwrap()` to access the `PGConnection` interface from any standard JDBC connection:
+
+```java
+import org.postgresql.PGConnection;
+
+Connection conn = DriverManager.getConnection(url, props);
+PGConnection pgConn = conn.unwrap(PGConnection.class);
+```
+
+<Note>
+You can also cast directly: `(org.postgresql.PGConnection) conn`. However, `unwrap()` is preferred as it is more portable.
+</Note>
+
+## API methods
+
+### COPY API
+
+```java
+CopyManager getCopyAPI() throws SQLException
+```
+
+Returns the `CopyManager` for this connection, which provides access to PostgreSQL's bulk data transfer commands (`COPY FROM STDIN` and `COPY TO STDOUT`).
+
+```java
+PGConnection pgConn = conn.unwrap(PGConnection.class);
+CopyManager copyManager = pgConn.getCopyAPI();
+```
+
+See [CopyManager API](/reference/copy-manager) for full documentation.
+
+---
+
+### Replication API
+
+```java
+PGReplicationConnection getReplicationAPI()
+```
+
+Returns the `PGReplicationConnection` for creating replication slots and starting replication streams. The connection must have been established in replication mode.
+
+```java
+PGConnection pgConn = conn.unwrap(PGConnection.class);
+PGReplicationConnection replAPI = pgConn.getReplicationAPI();
+```
+
+See [Replication API](/reference/replication-api) for full documentation.
+
+---
+
+### Large Object API
+
+```java
+LargeObjectManager getLargeObjectAPI() throws SQLException
+```
+
+Returns the `LargeObjectManager` for accessing PostgreSQL large objects (LOBs). Provides random-access read and write operations, similar to the libpq C interface.
+
+```java
+LargeObjectManager lobj = pgConn.getLargeObjectAPI();
+```
+
+---
+
+### Fastpath API
+
+```java
+Fastpath getFastpathAPI() throws SQLException
+```
+
+Returns the legacy Fastpath API for calling server-side functions directly over the Fastpath protocol. For most use cases, a prepared statement calling the function is both more portable and equally performant.
+
+---
+
+### LISTEN/NOTIFY
+
+```java
+PGNotification[] getNotifications() throws SQLException
+PGNotification[] getNotifications(int timeoutMillis) throws SQLException
+```
+
+Returns any `LISTEN`/`NOTIFY` notifications received since the last call. Returns an empty array if no notifications are pending.
+
+<Note>
+The JDBC driver cannot receive asynchronous notifications. You must poll using `getNotifications()`. A timeout can be specified to block until a notification arrives or the timeout expires.
+</Note>
+
+**Parameters:**
+- `timeoutMillis` — When `0`, blocks indefinitely. When greater than `0`, blocks for at most the specified number of milliseconds or until at least one notification is received.
+
+**Example:**
+
+```java
+import java.sql.*;
+import org.postgresql.PGConnection;
+import org.postgresql.PGNotification;
+
+Connection conn = DriverManager.getConnection(url, "user", "password");
+PGConnection pgConn = conn.unwrap(PGConnection.class);
+
+// Subscribe to a channel
+Statement stmt = conn.createStatement();
+stmt.execute("LISTEN mychannel");
+stmt.close();
+
+// Poll for notifications
+while (true) {
+    PGNotification[] notifications = pgConn.getNotifications(5000); // 5 second poll
+    for (PGNotification notification : notifications) {
+        System.out.println("Channel: " + notification.getName());
+        System.out.println("PID: " + notification.getPID());
+        System.out.println("Payload: " + notification.getParameter());
+    }
+}
+```
+
+#### PGNotification interface
+
+Each notification object exposes:
+
+| Method | Returns | Description |
+|---|---|---|
+| `getName()` | `String` | The notification channel name. |
+| `getPID()` | `int` | The PID of the backend process that sent the notification. |
+| `getParameter()` | `String` | The optional payload string passed with the `NOTIFY` command. |
+
+---
+
+### Server parameter status
+
+```java
+Map<String, String> getParameterStatuses()
+String getParameterStatus(String parameterName)
+```
+
+PostgreSQL automatically reports changes to certain server configuration variables (GUC variables marked `GUC_REPORT`) to the client. These are accessible via the parameter status methods.
+
+**`getParameterStatuses()`** — Returns an unmodifiable map of all reported parameter names to their current values. Parameter names are case-insensitive and case-preserving.
+
+**`getParameterStatus(String name)`** — Shorthand to retrieve a single parameter value by name, or `null` if not reported.
+
+As of PostgreSQL 11, reportable parameters include:
+
+| Parameter | Notes |
+|---|---|
+| `application_name` | Also accessible via `Connection.getClientInfo()`. |
+| `client_encoding` | Always `UTF8` in pgjdbc. |
+| `DateStyle` | pgjdbc requires `ISO`. |
+| `standard_conforming_strings` | Used by `escapeLiteral()`. |
+| `TimeZone` | Set from the JVM timezone. |
+| `integer_datetimes` | |
+| `IntervalStyle` | |
+| `server_encoding` | |
+| `server_version` | |
+| `is_superuser` | |
+| `session_authorization` | |
+
+**Example:**
+
+```java
+PGConnection pgConn = conn.unwrap(PGConnection.class);
+
+// Get all reported parameters
+Map<String, String> params = pgConn.getParameterStatuses();
+System.out.println("Server version: " + params.get("server_version"));
+
+// Get a specific parameter
+String appName = pgConn.getParameterStatus("application_name");
+System.out.println("Application name: " + appName);
+```
+
+---
+
+### Prepared statement threshold
+
+```java
+int getPrepareThreshold()
+void setPrepareThreshold(int threshold)
+```
+
+Gets or sets the default number of times a `PreparedStatement` must be executed before server-side prepare is used. New statements created from this connection inherit this threshold.
+
+See `prepareThreshold` connection property for details.
+
+```java
+PGConnection pgConn = conn.unwrap(PGConnection.class);
+pgConn.setPrepareThreshold(3); // use server-side prepare after 3 executions
+System.out.println(pgConn.getPrepareThreshold()); // 3
+```
+
+---
+
+### Default fetch size
+
+```java
+int getDefaultFetchSize()
+void setDefaultFetchSize(int fetchSize) throws SQLException
+```
+
+Gets or sets the default fetch size for statements created from this connection. Equivalent to the `defaultRowFetchSize` connection property.
+
+```java
+pgConn.setDefaultFetchSize(100);
+```
+
+---
+
+### Query timeout
+
+```java
+int getQueryTimeout()
+void setQueryTimeout(int seconds) throws SQLException
+```
+
+Gets or sets the default query timeout for statements created from this connection.
+
+```java
+pgConn.setQueryTimeout(30);
+```
+
+---
+
+### Array creation
+
+```java
+Array createArrayOf(String typeName, Object elements) throws SQLException
+```
+
+Creates a PostgreSQL array wrapping the given Java array. Unlike `Connection.createArrayOf(String, Object[])`, this method also supports primitive arrays (e.g., `int[]`, `double[]`).
+
+```java
+PGConnection pgConn = conn.unwrap(PGConnection.class);
+
+int[] ids = {1, 2, 3};
+Array pgArray = pgConn.createArrayOf("int4", ids);
+
+PreparedStatement ps = conn.prepareStatement("SELECT * FROM users WHERE id = ANY(?)");
+ps.setArray(1, pgArray);
+```
+
+---
+
+### Miscellaneous
+
+```java
+int getBackendPID()
+```
+Returns the PID of the PostgreSQL backend process handling this connection. Useful for debugging and monitoring via `pg_stat_activity`.
+
+```java
+void cancelQuery() throws SQLException
+```
+Sends a cancel request for the currently executing query on this connection.
+
+```java
+String escapeIdentifier(String identifier) throws SQLException
+String escapeLiteral(String literal) throws SQLException
+```
+Properly quote identifiers or string literals for use in SQL statements, handling embedded quotes and case-folding.
+
+```java
+void alterUserPassword(String user, char[] newPassword, String encryptionType) throws SQLException
+```
+Change a user's password. Encrypts the password locally before sending (never sends plaintext). Acceptable `encryptionType` values: `null` (use server default), `"md5"`, `"scram-sha-256"`.
+
+---
+
+### Custom type handlers
+
+```java
+void addDataType(String type, Class<? extends PGobject> klass) throws SQLException
+```
+
+Register a custom Java class to handle a PostgreSQL type. The handler class must extend `org.postgresql.util.PGobject`.
+
+```java
+// Register a custom handler for a user-defined type
+pgConn.addDataType("mytype", MyCustomType.class);
+```
+
+---
+
+### Adaptive fetch
+
+```java
+boolean getAdaptiveFetch()
+void setAdaptiveFetch(boolean adaptiveFetch)
+```
+
+Gets or sets whether adaptive fetch is enabled for this connection. When enabled, the driver dynamically calculates the number of rows to fetch per round trip to maximize use of `maxResultBuffer`. Changes do not affect existing `Statement` or `ResultSet` objects.
+
+---
+
+### Query mode and autosave
+
+```java
+PreferQueryMode getPreferQueryMode()
+```
+
+Returns the current query execution mode for this connection (`extended`, `extendedForPrepared`, `extendedCacheEverything`, or `simple`). Set via the `preferQueryMode` connection property.
+
+```java
+AutoSave getAutosave()
+void setAutosave(AutoSave autoSave)
+```
+
+Gets or sets the automatic savepoint behavior. Values from `org.postgresql.jdbc.AutoSave`: `NEVER` (default), `ALWAYS` (savepoint before every query), `CONSERVATIVE` (savepoint, rollback only for specific errors like cached plan changes).

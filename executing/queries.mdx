@@ -1,0 +1,216 @@
+---
+title: "Issuing Queries"
+description: "Execute SQL queries, process result sets, perform updates, and work with Java 8 date/time types using the PostgreSQL JDBC driver."
+keywords: ["queries", "ResultSet", "Statement", "PreparedStatement", "executeQuery", "cursor", "Java 8 date"]
+---
+
+Any time you want to issue SQL statements to the database, you need a `Statement` or `PreparedStatement` instance. Once you have one, you can issue a query which returns a `ResultSet`.
+
+## Statement vs PreparedStatement
+
+<Tabs>
+  <Tab title="Statement">
+    Use `Statement` for one-off queries where no parameters need to be bound. The SQL text is sent to the server each time as-is.
+
+    ```java Statement — fixed query
+    Statement st = conn.createStatement();
+    ResultSet rs = st.executeQuery("SELECT * FROM mytable WHERE columnfoo = 500");
+    while (rs.next()) {
+        System.out.print("Column 1 returned ");
+        System.out.println(rs.getString(1));
+    }
+    rs.close();
+    st.close();
+    ```
+  </Tab>
+  <Tab title="PreparedStatement">
+    Use `PreparedStatement` when you need to bind parameters. The `?` character is the placeholder for positional parameters.
+
+    ```java PreparedStatement — parameterised query
+    int foovalue = 500;
+    PreparedStatement st = conn.prepareStatement("SELECT * FROM mytable WHERE columnfoo = ?");
+    st.setInt(1, foovalue);
+    ResultSet rs = st.executeQuery();
+    while (rs.next()) {
+        System.out.print("Column 1 returned ");
+        System.out.println(rs.getString(1));
+    }
+    rs.close();
+    st.close();
+    ```
+  </Tab>
+</Tabs>
+
+## Processing ResultSets
+
+<Steps>
+  <Step title="Call next() before reading">
+    You must call `next()` before reading any values. It returns `true` if a row is available and advances the cursor to that row.
+
+    ```java
+    while (rs.next()) {
+        // row is now ready to read
+    }
+    ```
+  </Step>
+  <Step title="Read column values">
+    Use typed getters such as `getString()`, `getInt()`, and `getObject()` to retrieve column data by index (1-based) or name.
+
+    ```java
+    String name   = rs.getString(1);      // column 1 as String
+    int    count  = rs.getInt("count");   // column by name as int
+    Object val    = rs.getObject(2);      // column 2 as Object
+    ```
+  </Step>
+  <Step title="Close the ResultSet">
+    Always close the `ResultSet` when done. Executing another query on the same `Statement` closes the current `ResultSet` automatically, but explicit closing is safer.
+
+    ```java
+    rs.close();
+    st.close();
+    ```
+  </Step>
+</Steps>
+
+<Warning>
+  Once you make another query with the `Statement` used to create a `ResultSet`, the currently open `ResultSet` is closed automatically. Open a second `Statement` if you need to run a query while iterating a `ResultSet`.
+</Warning>
+
+<Note>
+  When using the `PreparedStatement` API, `ResultSet` switches to binary transfer mode after five executions (controlled by the `prepareThreshold` connection property). This may change the formatting of values returned by `getString()` on non-string columns.
+</Note>
+
+## Cursor-based ResultSets
+
+By default the driver fetches all rows at once. For large result sets you can enable server-side cursors by setting a fetch size, which streams rows in batches.
+
+```java Cursor-based fetch
+// autocommit must be off for cursors to work
+conn.setAutoCommit(false);
+Statement st = conn.createStatement();
+
+// Enable cursor — fetch 50 rows at a time
+st.setFetchSize(50);
+ResultSet rs = st.executeQuery("SELECT * FROM mytable");
+while (rs.next()) {
+    System.out.print("a row was returned.");
+}
+rs.close();
+
+// Disable cursor — all rows fetched at once again
+st.setFetchSize(0);
+rs = st.executeQuery("SELECT * FROM mytable");
+while (rs.next()) {
+    System.out.print("many rows were returned.");
+}
+rs.close();
+
+st.close();
+```
+
+<Warning>
+  Cursor-based `ResultSet`s have several restrictions. If any of the following are not met, the driver silently falls back to fetching all rows at once:
+
+  - The connection must **not** be in autocommit mode. The backend closes cursors at the end of transactions, so autocommit prevents fetching from them.
+  - The `Statement` must be created with `ResultSet.TYPE_FORWARD_ONLY` (the default). Scrollable result sets are not supported with cursors.
+  - The query must be a **single** statement — not multiple statements joined with semicolons.
+</Warning>
+
+## Performing updates
+
+To `INSERT`, `UPDATE`, or `DELETE` rows, use `executeUpdate()`. It returns the number of rows affected rather than a `ResultSet`.
+
+```java Deleting rows
+int foovalue = 500;
+PreparedStatement st = conn.prepareStatement("DELETE FROM mytable WHERE columnfoo = ?");
+st.setInt(1, foovalue);
+int rowsDeleted = st.executeUpdate();
+System.out.println(rowsDeleted + " rows deleted");
+st.close();
+```
+
+## Creating and modifying database objects
+
+Use `execute()` to run DDL statements such as `CREATE`, `ALTER`, or `DROP`. It does not return a result.
+
+```java Dropping a table
+Statement st = conn.createStatement();
+st.execute("DROP TABLE mytable");
+st.close();
+```
+
+## Java 8 Date and Time API
+
+The PostgreSQL JDBC driver implements native support for the Java 8 Date and Time API (JSR-310) via JDBC 4.2.
+
+### Type mapping
+
+| PostgreSQL type                   | Java SE 8 type   |
+| --------------------------------- | ---------------- |
+| `DATE`                            | `LocalDate`      |
+| `TIME [ WITHOUT TIME ZONE ]`      | `LocalTime`      |
+| `TIMESTAMP [ WITHOUT TIME ZONE ]` | `LocalDateTime`  |
+| `TIMESTAMP WITH TIME ZONE`        | `OffsetDateTime` |
+
+<Note>
+  `ZonedDateTime`, `Instant`, and `OffsetTime` / `TIME WITH TIME ZONE` are **not** supported. All `OffsetDateTime` instances will be in UTC (offset 0), because the backend stores them as UTC.
+</Note>
+
+### Reading Java 8 date/time values
+
+Pass the target class to `getObject()`:
+
+```java Reading a LocalDate
+Statement st = conn.createStatement();
+ResultSet rs = st.executeQuery("SELECT * FROM mytable WHERE columnfoo = 500");
+while (rs.next()) {
+    System.out.print("Column 1 returned ");
+    LocalDate localDate = rs.getObject(1, LocalDate.class);
+    System.out.println(localDate);
+}
+rs.close();
+st.close();
+```
+
+For other types simply pass the corresponding class — for example `rs.getObject(1, LocalDateTime.class)`. The Java type must match the SQL type shown in the mapping table above.
+
+### Writing Java 8 date/time values
+
+Use `setObject()` with the Java 8 value directly:
+
+```java Writing a LocalDate
+LocalDate localDate = LocalDate.now();
+PreparedStatement st = conn.prepareStatement("INSERT INTO mytable (columnfoo) VALUES (?)");
+st.setObject(1, localDate);
+st.executeUpdate();
+st.close();
+```
+
+## Important notes
+
+### Statement and PreparedStatement
+
+- A single `Statement` instance can be reused as many times as needed across the life of a connection.
+- Only **one** `ResultSet` can be open per `Statement` or `PreparedStatement` at a time. Create a second `Statement` if you need to query while iterating.
+- In a multithreaded environment, use a **separate** `Statement` per thread.
+- Always close `Statement` and `PreparedStatement` objects when you are done with them.
+
+### The `?` placeholder and PostgreSQL operators
+
+In JDBC, `?` is the placeholder for positional parameters in a `PreparedStatement`. PostgreSQL has several operators that contain a question mark (for example the JSON containment operators). To prevent these from being interpreted as parameter placeholders, escape them by doubling: `??`.
+
+<CodeGroup>
+
+```java In a PreparedStatement (required)
+PreparedStatement st = conn.prepareStatement(
+    "SELECT * FROM jsondata WHERE doc ?? 'key'"
+);
+```
+
+```java In a plain Statement (optional)
+// A single ? also works here, but ?? is accepted too
+Statement st = conn.createStatement();
+st.executeQuery("SELECT * FROM jsondata WHERE doc ? 'key'");
+```
+
+</CodeGroup>

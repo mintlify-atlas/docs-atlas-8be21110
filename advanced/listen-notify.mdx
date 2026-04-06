@@ -1,0 +1,220 @@
+---
+title: "LISTEN / NOTIFY"
+description: "Use PostgreSQL LISTEN and NOTIFY for inter-process communication from Java with the pgjdbc driver."
+keywords: ["listen", "notify", "notifications", "PGNotification", "getNotifications", "pgjdbc", "jdbc"]
+---
+
+PostgreSQL's `LISTEN` and `NOTIFY` commands provide a simple form of inter-process communication (IPC) for processes that share the same database. Any number of sessions can listen on a named channel; other sessions can send notifications on that channel, optionally with a payload string.
+
+## Overview
+
+| Command | Description |
+|---|---|
+| `LISTEN channel` | Begin receiving notifications on the named channel |
+| `NOTIFY channel [, payload]` | Send a notification to all listeners on the channel |
+| `UNLISTEN channel` | Stop listening on the named channel |
+| `UNLISTEN *` | Stop listening on all channels |
+
+These commands are issued through the standard `Statement` interface. Receiving notifications requires casting the `Connection` to `org.postgresql.PGConnection` and calling `getNotifications()`.
+
+## Issuing LISTEN and NOTIFY
+
+```java
+// Start listening
+Statement stmt = conn.createStatement();
+stmt.execute("LISTEN mymessage");
+stmt.close();
+
+// Send a notification (from another connection)
+Statement stmt2 = conn2.createStatement();
+stmt2.execute("NOTIFY mymessage");
+stmt2.close();
+
+// Send a notification with a payload
+stmt2.execute("NOTIFY mymessage, 'hello world'");
+```
+
+## Receiving notifications
+
+Cast the connection to `PGConnection` and call `getNotifications()`:
+
+```java
+org.postgresql.PGConnection pgconn =
+    conn.unwrap(org.postgresql.PGConnection.class);
+
+org.postgresql.PGNotification[] notifications = pgconn.getNotifications();
+
+for (org.postgresql.PGNotification n : notifications) {
+    System.out.println("Channel: " + n.getName());
+    System.out.println("PID:     " + n.getPID());
+    System.out.println("Payload: " + n.getParameter());
+}
+```
+
+### PGNotification interface
+
+| Method | Return type | Description |
+|---|---|---|
+| `getName()` | `String` | The channel name passed to `LISTEN` / `NOTIFY` |
+| `getPID()` | `int` | The process ID of the notifying backend |
+| `getParameter()` | `String` | The payload string, or an empty string if none was given |
+
+## Polling for notifications
+
+<Warning>
+The JDBC driver **cannot receive notifications asynchronously**. It must poll the backend to check whether any notifications have been issued. There is no push mechanism.
+</Warning>
+
+The polling approach requires sleeping between calls to avoid busy-waiting:
+
+```java
+while (true) {
+    org.postgresql.PGNotification[] notifications = pgconn.getNotifications();
+
+    for (int i = 0; i < notifications.length; i++) {
+        System.out.println("Got notification: " + notifications[i].getName());
+    }
+
+    // wait a while before checking again for new notifications
+    Thread.sleep(500);
+}
+```
+
+### Blocking poll with timeout
+
+`getNotifications(int timeoutMillis)` blocks for up to `timeoutMillis` milliseconds before returning, which avoids constant round-trips to the server:
+
+```java
+// Blocks for up to 10 seconds waiting for a notification
+org.postgresql.PGNotification[] notifications = pgconn.getNotifications(10000);
+```
+
+<Warning>
+When using `getNotifications(int timeoutMillis)`, statements from **other threads** sharing the same connection will block for the duration of the timeout. Use a dedicated connection for the listener thread if other threads also need to execute queries.
+</Warning>
+
+## Complete example
+
+The following example creates two connections — one for the listener thread and one for the notifier thread — to demonstrate cross-connection communication:
+
+<CodeGroup>
+
+```java NotificationTest.java
+import java.sql.*;
+
+public class NotificationTest {
+    public static void main(String args[]) throws Exception {
+        Class.forName("org.postgresql.Driver");
+        String url = "jdbc:postgresql://localhost:5432/test";
+
+        // Create two distinct connections, one for the notifier
+        // and another for the listener to show the communication
+        // works across connections although this example would
+        // work fine with just one connection.
+
+        Connection lConn = DriverManager.getConnection(url, "test", "");
+        Connection nConn = DriverManager.getConnection(url, "test", "");
+
+        // Create two threads, one to issue notifications and
+        // the other to receive them.
+
+        Listener listener = new Listener(lConn);
+        Notifier notifier = new Notifier(nConn);
+        listener.start();
+        notifier.start();
+    }
+}
+
+class Listener extends Thread {
+    private Connection conn;
+    private org.postgresql.PGConnection pgconn;
+
+    Listener(Connection conn) throws SQLException {
+        this.conn = conn;
+        this.pgconn = conn.unwrap(org.postgresql.PGConnection.class);
+        Statement stmt = conn.createStatement();
+        stmt.execute("LISTEN mymessage");
+        stmt.close();
+    }
+
+    public void run() {
+        try {
+            while (true) {
+                org.postgresql.PGNotification notifications[] = pgconn.getNotifications();
+
+                // If this thread is the only one that uses the connection, a timeout can be used to
+                // receive notifications immediately:
+                // org.postgresql.PGNotification notifications[] = pgconn.getNotifications(10000);
+
+                for (int i = 0; i < notifications.length; i++) {
+                    System.out.println("Got notification: " + notifications[i].getName());
+                }
+
+                // wait a while before checking again for new
+                // notifications
+
+                Thread.sleep(500);
+            }
+        } catch (SQLException sqle) {
+            sqle.printStackTrace();
+        } catch (InterruptedException ie) {
+            ie.printStackTrace();
+        }
+    }
+}
+
+class Notifier extends Thread {
+    private Connection conn;
+
+    public Notifier(Connection conn) {
+        this.conn = conn;
+    }
+
+    public void run() {
+        while (true) {
+            try {
+                Statement stmt = conn.createStatement();
+                stmt.execute("NOTIFY mymessage");
+                stmt.close();
+                Thread.sleep(2000);
+            } catch (SQLException sqle) {
+                sqle.printStackTrace();
+            } catch (InterruptedException ie) {
+                ie.printStackTrace();
+            }
+        }
+    }
+}
+```
+
+</CodeGroup>
+
+## Best practices
+
+<Tip>
+Use a **dedicated connection** for the listener thread. This avoids the blocking behavior of `getNotifications(int timeoutMillis)` affecting other threads, and makes it safe to use the timeout variant for more responsive notification delivery.
+</Tip>
+
+- Call `UNLISTEN channel` (or `UNLISTEN *`) when you no longer need to receive notifications on a channel, to avoid accumulating stale listeners on the server.
+- Use the payload parameter (`NOTIFY channel, 'payload'`) to pass lightweight contextual information — for example, a row ID — so the listener can act without an additional query in simple cases.
+- For high-frequency notification scenarios, consider batching on the consumer side: drain all pending notifications with a single `getNotifications()` call before processing.
+
+<Accordion title="Sending notifications with a payload">
+
+```sql
+NOTIFY order_updates, '42';
+```
+
+```java
+org.postgresql.PGNotification[] notifications = pgconn.getNotifications();
+for (org.postgresql.PGNotification n : notifications) {
+    if ("order_updates".equals(n.getName())) {
+        int orderId = Integer.parseInt(n.getParameter());
+        // fetch order 42 and process it
+    }
+}
+```
+
+Payloads are limited to 8000 bytes. For larger data, use the payload to carry a reference (e.g., a primary key) and fetch the full data separately.
+
+</Accordion>

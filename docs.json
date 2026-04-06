@@ -1,122 +1,105 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "PostgreSQL JDBC Driver",
+  "theme": "palm",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#306597",
+    "light": "#90b5ce",
+    "dark": "#cddbe6"
   },
   "favicon": "/favicon.svg",
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/pgjdbc/pgjdbc"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/pgjdbc/pgjdbc"
+    }
+  },
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "Documentation",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "Get Started",
             "pages": [
-              "index",
+              "introduction",
               "quickstart",
-              "development"
+              "setup"
             ]
           },
           {
-            "group": "Customization",
+            "group": "Connecting",
             "pages": [
-              "essentials/settings",
-              "essentials/navigation"
+              "connecting/connection-url",
+              "connecting/connection-properties",
+              "connecting/ssl",
+              "connecting/datasources"
             ]
           },
           {
-            "group": "Writing content",
+            "group": "Executing SQL",
             "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
+              "executing/queries",
+              "executing/prepared-statements",
+              "executing/stored-procedures",
+              "executing/batch-operations"
             ]
           },
           {
-            "group": "AI tools",
+            "group": "Advanced Features",
             "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "advanced/binary-data",
+              "advanced/replication",
+              "advanced/arrays",
+              "advanced/geometric-types",
+              "advanced/listen-notify"
+            ]
+          },
+          {
+            "group": "Configuration & Operations",
+            "pages": [
+              "configuration/logging",
+              "configuration/performance",
+              "configuration/multithreading",
+              "configuration/jdbc-escapes"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "Reference",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "Connection Properties",
             "pages": [
-              "api-reference/introduction"
+              "reference/all-properties",
+              "reference/ssl-properties",
+              "reference/timeout-properties"
             ]
           },
           {
-            "group": "Endpoint examples",
+            "group": "API Extensions",
             "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "reference/pgconnection",
+              "reference/pgstatement",
+              "reference/copy-manager",
+              "reference/replication-api"
+            ]
+          },
+          {
+            "group": "Resources",
+            "pages": [
+              "reference/changelog",
+              "reference/contributing"
             ]
           }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
-  },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
+    ]
   }
 }

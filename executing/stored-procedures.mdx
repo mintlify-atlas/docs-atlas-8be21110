@@ -1,0 +1,172 @@
+---
+title: "Calling Stored Procedures and Functions"
+description: "Invoke PostgreSQL stored functions and procedures from Java using CallableStatement, JDBC escape syntax, and the escapeSyntaxCallMode property."
+keywords: ["CallableStatement", "stored procedure", "stored function", "escapeSyntaxCallMode", "refcursor", "SETOF", "registerOutParameter"]
+---
+
+PostgreSQL supports two types of stored objects: **functions** that return a result value, and (since PostgreSQL 11) **procedures** that can perform transaction control. Both are invoked using `CallableStatement` and the standard JDBC escape call syntax `{call storedobject(?)}`.
+
+## escapeSyntaxCallMode
+
+The `escapeSyntaxCallMode` connection property controls how the driver transforms escape call syntax into the underlying SQL (`CALL` or `SELECT`).
+
+| Mode | Behaviour |
+|------|-----------|
+| `select` (default) | Always transforms to `SELECT`. Supports backwards compatibility and is required for functions returning `void`. |
+| `callIfNoReturn` | Maps `CallableStatement` with a return value to a function (`SELECT`); without a return value to a procedure (`CALL`). Recommended for new applications. |
+| `call` | Always transforms to `CALL`. |
+
+<Tip>
+  For new applications, use `escapeSyntaxCallMode=callIfNoReturn` to correctly route both functions and procedures without extra configuration.
+</Tip>
+
+## Calling a function that returns a value
+
+Use `{? = call funcname(?)}` syntax and register the return parameter with `registerOutParameter()` before executing.
+
+```java Calling the built-in upper() function
+CallableStatement upperFunc = conn.prepareCall("{? = call upper( ? ) }");
+upperFunc.registerOutParameter(1, Types.VARCHAR);
+upperFunc.setString(2, "lowercase to uppercase");
+upperFunc.execute();
+String upperCased = upperFunc.getString(1);
+upperFunc.close();
+```
+
+<Steps>
+  <Step title="Prepare the call">
+    Use `conn.prepareCall()` with JDBC escape syntax. The leading `? =` captures the return value.
+  </Step>
+  <Step title="Register the output parameter">
+    Call `registerOutParameter(position, Types.*)` for any `OUT` or return parameter before executing.
+  </Step>
+  <Step title="Bind input parameters">
+    Set input parameters using the standard `setXxx()` methods.
+  </Step>
+  <Step title="Execute and retrieve">
+    Call `execute()`, then retrieve output values with the matching `getXxx()` method.
+  </Step>
+</Steps>
+
+## Getting a ResultSet from a stored function
+
+### From a function returning SETOF type
+
+Functions that return data as a set must be called through the normal `Statement` or `PreparedStatement` interfaces — **not** through `CallableStatement`.
+
+```java SETOF function via Statement
+Statement stmt = conn.createStatement();
+stmt.execute("CREATE OR REPLACE FUNCTION setoffunc() RETURNS SETOF int AS " +
+    "' SELECT 1 UNION SELECT 2;' LANGUAGE sql");
+ResultSet rs = stmt.executeQuery("SELECT * FROM setoffunc()");
+while (rs.next()) {
+    // do something
+}
+rs.close();
+stmt.close();
+```
+
+<Warning>
+  Do not use `CallableStatement` for `SETOF`-returning functions. Use `Statement.executeQuery()` or `PreparedStatement.executeQuery()` instead.
+</Warning>
+
+### From a function returning a refcursor
+
+When calling a function that returns a `refcursor`, cast the result of `getObject()` to `ResultSet`.
+
+```java refcursor return value as ResultSet
+// Setup function to call.
+Statement stmt = conn.createStatement();
+stmt.execute("CREATE OR REPLACE FUNCTION refcursorfunc() RETURNS refcursor AS '" +
+    " DECLARE " +
+    "    mycurs refcursor; " +
+    " BEGIN " +
+    "    OPEN mycurs FOR SELECT 1 UNION SELECT 2; " +
+    "    RETURN mycurs; " +
+    " END;' language plpgsql");
+stmt.close();
+
+// We must be inside a transaction for cursors to work.
+conn.setAutoCommit(false);
+
+// Function call.
+CallableStatement func = conn.prepareCall("{? = call refcursorfunc() }");
+func.registerOutParameter(1, Types.OTHER);
+func.execute();
+ResultSet results = (ResultSet) func.getObject(1);
+while (results.next()) {
+    // do something with the results.
+}
+results.close();
+func.close();
+```
+
+<Note>
+  Even though a `ResultSet` from a `refcursor` is cursor-backed, **all data is retrieved and cached on the client**. The `Statement` fetch size parameter has no effect here. This is a current limitation of the JDBC driver, not the server.
+</Note>
+
+### Treating a refcursor as a cursor name
+
+You can also retrieve the refcursor as a plain string cursor name and then issue `FETCH` or `MOVE` commands directly.
+
+```java refcursor as cursor name
+conn.setAutoCommit(false);
+CallableStatement func = conn.prepareCall("{? = call refcursorfunc() }");
+func.registerOutParameter(1, Types.OTHER);
+func.execute();
+String cursorName = func.getString(1);
+func.close();
+```
+
+With the cursor name you can use standard PostgreSQL cursor commands:
+
+```sql
+FETCH ALL FROM "<cursorName>";
+MOVE FORWARD 10 IN "<cursorName>";
+```
+
+## Calling a stored procedure (PostgreSQL 11+)
+
+Procedures can perform transaction control (`COMMIT`, `ROLLBACK`) inside their body. Use `escapeSyntaxCallMode=callIfNoReturn` so the driver emits a `CALL` statement.
+
+```java Stored procedure with transaction control
+// set up a connection
+String url = "jdbc:postgresql://localhost/test";
+Properties props = new Properties();
+...other properties...
+    // Ensure EscapeSyntaxCallmode property set to support procedures if no return value
+    props.setProperty("escapeSyntaxCallMode", "callIfNoReturn");
+Connection con = DriverManager.getConnection(url, props);
+
+// Setup procedure to call.
+Statement stmt = con.createStatement();
+stmt.execute("CREATE TEMP TABLE temp_val ( some_val bigint )");
+stmt.execute("CREATE OR REPLACE PROCEDURE commitproc(a INOUT bigint) AS '" +
+    " BEGIN " +
+    "    INSERT INTO temp_val values(a); " +
+    "    COMMIT; " +
+    " END;' LANGUAGE plpgsql");
+stmt.close();
+
+// As of v11, we must be outside a transaction for procedures with transactions to work.
+con.setAutoCommit(true);
+
+// Procedure call with transaction
+CallableStatement proc = con.prepareCall("{call commitproc( ? )}");
+proc.setInt(1, 100);
+proc.execute();
+proc.close();
+```
+
+<Warning>
+  Procedures that perform transaction control must be called **outside** a transaction (i.e., with autocommit enabled). PostgreSQL 11+ enforces this at the server level.
+</Warning>
+
+## registerOutParameter quick reference
+
+| Output type | Types constant | Retrieval method |
+|-------------|----------------|------------------|
+| String / VARCHAR | `Types.VARCHAR` | `getString(pos)` |
+| Integer | `Types.INTEGER` | `getInt(pos)` |
+| Refcursor | `Types.OTHER` | `(ResultSet) getObject(pos)` or `getString(pos)` |
+| Numeric | `Types.NUMERIC` | `getBigDecimal(pos)` |

@@ -1,0 +1,337 @@
+---
+title: "Replication API"
+description: "Reference for the PostgreSQL JDBC Driver replication API for logical and physical replication streams."
+keywords: ["pgjdbc", "replication", "logical replication", "WAL", "PGReplicationConnection", "PGReplicationStream", "LSN"]
+---
+
+The PostgreSQL JDBC Driver provides a replication API for consuming logical and physical replication streams. Logical replication (introduced in PostgreSQL 9.4) streams row-level change events in real time, enabling use cases such as cache invalidation, search index updates, and event-driven architectures.
+
+## Prerequisites
+
+Before using the replication API, configure your PostgreSQL server:
+
+<Steps>
+  <Step title="Configure postgresql.conf">
+    ```ini
+    max_wal_senders = 4          # max walsender processes
+    wal_keep_segments = 4        # WAL segments to retain (older servers)
+    wal_level = logical          # required for logical replication
+    max_replication_slots = 4    # required for logical replication
+    ```
+  </Step>
+  <Step title="Configure pg_hba.conf">
+    Allow the replication user to connect with replication privileges:
+
+    ```
+    local   replication   all                   trust
+    host    replication   all   127.0.0.1/32    md5
+    host    replication   all   ::1/128         md5
+    ```
+  </Step>
+  <Step title="Install a decoding plugin">
+    For logical replication, a server-side output plugin decodes WAL records. The `test_decoding` plugin is included in `postgresql-contrib`. Many third-party plugins (e.g., `wal2json`, `pgoutput`) are also available.
+  </Step>
+</Steps>
+
+## Establishing a replication connection
+
+A replication connection is a special connection that can only issue replication commands. You cannot execute normal SQL over it.
+
+```java
+import java.util.Properties;
+import java.sql.*;
+import org.postgresql.PGConnection;
+import org.postgresql.PGProperty;
+
+String url = "jdbc:postgresql://localhost:5432/postgres";
+Properties props = new Properties();
+PGProperty.USER.set(props, "postgres");
+PGProperty.PASSWORD.set(props, "postgres");
+PGProperty.ASSUME_MIN_SERVER_VERSION.set(props, "9.4");
+PGProperty.REPLICATION.set(props, "database");
+PGProperty.PREFER_QUERY_MODE.set(props, "simple");
+
+Connection conn = DriverManager.getConnection(url, props);
+PGConnection replConnection = conn.unwrap(PGConnection.class);
+```
+
+<Warning>
+A replication connection cannot execute SQL queries. Use a separate standard connection for any SQL operations you need alongside replication.
+</Warning>
+
+## PGReplicationConnection
+
+Access the replication API via `PGConnection.getReplicationAPI()`:
+
+```java
+PGReplicationConnection replicationAPI = replConnection.getReplicationAPI();
+```
+
+## Managing replication slots
+
+Replication slots preserve WAL data on the server until the consumer has processed it.
+
+### Create a logical replication slot
+
+```java
+replicationAPI
+    .createReplicationSlot()
+    .logical()
+    .withSlotName("my_logical_slot")
+    .withOutputPlugin("test_decoding")
+    .make();
+```
+
+### Create a physical replication slot
+
+```java
+replicationAPI
+    .createReplicationSlot()
+    .physical()
+    .withSlotName("my_physical_slot")
+    .make();
+```
+
+### Drop a replication slot
+
+```java
+replicationAPI.dropReplicationSlot("my_logical_slot");
+```
+
+<Warning>
+Replication slots that are not consumed prevent the server from removing WAL files. This can cause disk space to fill up. Always drop unused slots.
+</Warning>
+
+## Starting a replication stream
+
+### Logical replication stream
+
+```java
+import org.postgresql.replication.PGReplicationStream;
+
+PGReplicationStream stream = replicationAPI
+    .replicationStream()
+    .logical()
+    .withSlotName("my_logical_slot")
+    .withSlotOption("include-xids", false)
+    .withSlotOption("skip-empty-xacts", true)
+    .withStatusInterval(20, TimeUnit.SECONDS)
+    .start();
+```
+
+### Logical stream from a specific LSN position
+
+```java
+import org.postgresql.replication.LogSequenceNumber;
+
+LogSequenceNumber startLSN = LogSequenceNumber.valueOf("6F/E3C53568");
+
+PGReplicationStream stream = replicationAPI
+    .replicationStream()
+    .logical()
+    .withSlotName("my_logical_slot")
+    .withSlotOption("include-xids", false)
+    .withStartPosition(startLSN)
+    .start();
+```
+
+### Physical replication stream
+
+```java
+LogSequenceNumber lsn = getCurrentLSN(); // obtain from a standard connection
+
+PGReplicationStream stream = replicationAPI
+    .replicationStream()
+    .physical()
+    .withStartPosition(lsn)
+    .start();
+
+ByteBuffer walData = stream.read();
+```
+
+## PGReplicationStream
+
+### Reading messages
+
+```java
+ByteBuffer read() throws SQLException
+```
+Blocking read. Waits until a message is available and returns it as a `ByteBuffer`. Also sends feedback to the server if the status interval has elapsed.
+
+```java
+ByteBuffer readPending() throws SQLException
+```
+Non-blocking read. Returns `null` if no message is currently available. Useful for polling-based consumption.
+
+```java
+// Non-blocking read loop
+while (true) {
+    ByteBuffer msg = stream.readPending();
+    if (msg == null) {
+        TimeUnit.MILLISECONDS.sleep(10);
+        continue;
+    }
+
+    int offset = msg.arrayOffset();
+    byte[] source = msg.array();
+    int length = source.length - offset;
+    System.out.println(new String(source, offset, length));
+}
+```
+
+### Feedback: acknowledging LSN positions
+
+The server requires periodic feedback from the consumer to know which WAL data can be archived or discarded. Feedback is sent automatically when `read()` or `readPending()` is called if the status interval has elapsed, or you can send it explicitly.
+
+```java
+void setAppliedLSN(LogSequenceNumber lsn)
+```
+Report the LSN that has been successfully applied by the consumer.
+
+```java
+void setFlushedLSN(LogSequenceNumber lsn)
+```
+Report the LSN that has been durably persisted by the consumer.
+
+```java
+LogSequenceNumber getLastReceiveLSN()
+```
+Returns the LSN of the last message received from the server.
+
+```java
+void forceUpdateStatus() throws SQLException
+```
+Immediately send a feedback message to the server with the current applied and flushed LSNs, regardless of the status interval.
+
+```java
+// Feedback pattern
+stream.setAppliedLSN(stream.getLastReceiveLSN());
+stream.setFlushedLSN(stream.getLastReceiveLSN());
+```
+
+<Tip>
+Send feedback more frequently than `wal_sender_timeout` (default: 60 seconds). A common recommendation is `wal_sender_timeout / 3` to avoid disconnections under network delays. Configure this with `withStatusInterval()`.
+</Tip>
+
+### Closing the stream
+
+```java
+stream.close();
+```
+
+Closes the replication stream and releases server-side resources.
+
+## LogSequenceNumber
+
+`org.postgresql.replication.LogSequenceNumber` represents a PostgreSQL WAL position.
+
+```java
+// Parse from string
+LogSequenceNumber lsn = LogSequenceNumber.valueOf("6F/E3C53568");
+
+// Get string representation
+System.out.println(lsn.asString()); // "6F/E3C53568"
+
+// Compare LSNs
+long lsnValue = lsn.asLong();
+```
+
+## Complete logical replication example
+
+```java
+import java.nio.ByteBuffer;
+import java.sql.*;
+import java.util.Properties;
+import java.util.concurrent.TimeUnit;
+import org.postgresql.*;
+import org.postgresql.replication.*;
+
+public class LogicalReplicationExample {
+    public static void main(String[] args) throws Exception {
+        String url = "jdbc:postgresql://localhost:5432/test";
+
+        // Replication connection
+        Properties replProps = new Properties();
+        PGProperty.USER.set(replProps, "postgres");
+        PGProperty.PASSWORD.set(replProps, "postgres");
+        PGProperty.ASSUME_MIN_SERVER_VERSION.set(replProps, "9.4");
+        PGProperty.REPLICATION.set(replProps, "database");
+        PGProperty.PREFER_QUERY_MODE.set(replProps, "simple");
+
+        Connection replConn = DriverManager.getConnection(url, replProps);
+        PGConnection pgReplConn = replConn.unwrap(PGConnection.class);
+
+        // Create replication slot
+        pgReplConn.getReplicationAPI()
+            .createReplicationSlot()
+            .logical()
+            .withSlotName("demo_logical_slot")
+            .withOutputPlugin("test_decoding")
+            .make();
+
+        // Make some changes using a separate SQL connection
+        Properties sqlProps = new Properties();
+        sqlProps.setProperty("user", "postgres");
+        sqlProps.setProperty("password", "postgres");
+        Connection sqlConn = DriverManager.getConnection(url, sqlProps);
+        sqlConn.setAutoCommit(true);
+
+        Statement st = sqlConn.createStatement();
+        st.execute("INSERT INTO test_table(name) VALUES('first change')");
+        st.execute("UPDATE test_table SET name = 'second change' WHERE pk = 1");
+        st.execute("DELETE FROM test_table WHERE pk = 1");
+        st.close();
+
+        // Start streaming
+        PGReplicationStream stream = pgReplConn.getReplicationAPI()
+            .replicationStream()
+            .logical()
+            .withSlotName("demo_logical_slot")
+            .withSlotOption("include-xids", false)
+            .withSlotOption("skip-empty-xacts", true)
+            .withStatusInterval(20, TimeUnit.SECONDS)
+            .start();
+
+        while (true) {
+            ByteBuffer msg = stream.readPending();
+            if (msg == null) {
+                TimeUnit.MILLISECONDS.sleep(10);
+                continue;
+            }
+
+            int offset = msg.arrayOffset();
+            byte[] source = msg.array();
+            int length = source.length - offset;
+            System.out.println(new String(source, offset, length));
+
+            // Acknowledge processed messages
+            stream.setAppliedLSN(stream.getLastReceiveLSN());
+            stream.setFlushedLSN(stream.getLastReceiveLSN());
+        }
+    }
+}
+```
+
+Example output (one line per `ByteBuffer` message):
+
+```sql
+BEGIN
+table public.test_table: INSERT: pk[integer]:1 name[character varying]:'first change'
+COMMIT
+BEGIN
+table public.test_table: UPDATE: pk[integer]:1 name[character varying]:'second change'
+COMMIT
+BEGIN
+table public.test_table: DELETE: pk[integer]:1
+COMMIT
+```
+
+## Logical vs physical replication
+
+| Feature | Logical | Physical |
+|---|---|---|
+| Data format | Plugin-defined (text, JSON, protobuf, etc.) | Raw binary WAL |
+| Granularity | Table or database | Entire cluster |
+| Requires replication slot | Yes | No (optional) |
+| Cross-version compatible | Generally yes | No |
+| Use case | CDC, ETL, real-time sync | Streaming replication replicas |

@@ -1,0 +1,124 @@
+{
+  "projectType": "sdk-library",
+  "projectName": "PostgreSQL JDBC Driver",
+  "projectDescription": "A pure Java Type 4 JDBC driver that enables Java applications to connect to PostgreSQL databases using standard JDBC APIs.",
+  "theme": "palm",
+  "primaryColor": "#306597",
+  "lightColor": "#90b5ce",
+  "darkColor": "#cddbe6",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "setup"
+            ]
+          },
+          {
+            "group": "Connecting",
+            "pages": [
+              "connecting/connection-url",
+              "connecting/connection-properties",
+              "connecting/ssl",
+              "connecting/datasources"
+            ]
+          },
+          {
+            "group": "Executing SQL",
+            "pages": [
+              "executing/queries",
+              "executing/prepared-statements",
+              "executing/stored-procedures",
+              "executing/batch-operations"
+            ]
+          },
+          {
+            "group": "Advanced Features",
+            "pages": [
+              "advanced/binary-data",
+              "advanced/replication",
+              "advanced/arrays",
+              "advanced/geometric-types",
+              "advanced/listen-notify"
+            ]
+          },
+          {
+            "group": "Configuration & Operations",
+            "pages": [
+              "configuration/logging",
+              "configuration/performance",
+              "configuration/multithreading",
+              "configuration/jdbc-escapes"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Reference",
+        "groups": [
+          {
+            "group": "Connection Properties",
+            "pages": [
+              "reference/all-properties",
+              "reference/ssl-properties",
+              "reference/timeout-properties"
+            ]
+          },
+          {
+            "group": "API Extensions",
+            "pages": [
+              "reference/pgconnection",
+              "reference/pgstatement",
+              "reference/copy-manager",
+              "reference/replication-api"
+            ]
+          },
+          {
+            "group": "Resources",
+            "pages": [
+              "reference/changelog",
+              "reference/contributing"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Pure Java Type 4 JDBC driver — no native libraries required",
+    "Full SSL/TLS support with configurable validation modes (disable, allow, prefer, require, verify-ca, verify-full)",
+    "Server-side prepared statements with automatic threshold-based activation",
+    "Logical and physical replication streaming API",
+    "Connection pooling via PGSimpleDataSource and PGConnectionPoolDataSource",
+    "XA distributed transaction support via PGXADataSource",
+    "Binary data transfer for improved performance",
+    "COPY protocol support for bulk data import/export",
+    "Asynchronous LISTEN/NOTIFY support",
+    "Java 8 Date and Time API support (JSR-310)",
+    "GSSAPI/Kerberos and SSPI authentication",
+    "Multi-host connection failover and load balancing",
+    "Adaptive fetch size for ResultSets",
+    "PostgreSQL-specific geometry types and large objects"
+  ],
+  "publicApiSurface": [
+    "org.postgresql.Driver (java.sql.Driver)",
+    "org.postgresql.ds.PGSimpleDataSource (javax.sql.DataSource)",
+    "org.postgresql.ds.PGConnectionPoolDataSource (javax.sql.ConnectionPoolDataSource)",
+    "org.postgresql.xa.PGXADataSource (javax.sql.XADataSource)",
+    "org.postgresql.PGConnection (PostgreSQL-specific connection extensions)",
+    "org.postgresql.PGStatement (PostgreSQL-specific statement extensions)",
+    "org.postgresql.copy.CopyManager (COPY protocol support)",
+    "org.postgresql.replication.PGReplicationConnection (Replication API)",
+    "org.postgresql.replication.PGReplicationStream (Streaming replication)",
+    "org.postgresql.largeobject.LargeObjectManager (Large Object API)",
+    "org.postgresql.geometric.* (Geometry types: PGpoint, PGcircle, PGline, etc.)",
+    "org.postgresql.PGProperty (Connection property constants)",
+    "org.postgresql.util.PGobject (Custom type base class)",
+    "DriverManager.getConnection(\"jdbc:postgresql://host:port/database\", props)"
+  ]
+}

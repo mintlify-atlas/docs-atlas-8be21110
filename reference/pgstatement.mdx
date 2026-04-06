@@ -1,0 +1,203 @@
+---
+title: "PGStatement Interface"
+description: "Reference for the org.postgresql.PGStatement interface, which exposes PostgreSQL-specific extensions to java.sql.Statement."
+keywords: ["pgjdbc", "PGStatement", "server-side prepared statements", "prepareThreshold", "infinity", "timestamp"]
+---
+
+`org.postgresql.PGStatement` is a PostgreSQL-specific extension to `java.sql.Statement`. All statements constructed by the PostgreSQL JDBC driver implement this interface.
+
+It provides per-statement control over server-side prepared statements and exposes constants for representing timestamp infinity values.
+
+## Obtaining PGStatement
+
+Use `Statement.unwrap()` to access the `PGStatement` interface:
+
+```java
+PreparedStatement pstmt = conn.prepareStatement("SELECT ?");
+org.postgresql.PGStatement pgStmt = pstmt.unwrap(org.postgresql.PGStatement.class);
+```
+
+## Methods
+
+### Last inserted OID
+
+```java
+long getLastOID() throws SQLException
+```
+
+Returns the OID of the last row inserted by this statement. Returns `0` if the last statement did not insert a row with an OID, or if the table was created without OIDs (the default since PostgreSQL 8.1).
+
+<Note>
+OIDs on user tables are deprecated in PostgreSQL and removed in PostgreSQL 12. This method is retained for compatibility with older setups.
+</Note>
+
+---
+
+### Controlling server-side prepared statements
+
+```java
+int getPrepareThreshold()
+void setPrepareThreshold(int threshold) throws SQLException
+```
+
+Gets or sets the number of times this specific statement must be executed before server-side prepare is activated.
+
+**Behavior:**
+- If `threshold` is a positive integer N, the Nth execution and all subsequent executions use a server-side prepared statement.
+- If `threshold` is `0`, server-side prepare is disabled for this statement.
+- If `threshold` is `-1`, server-side prepare is used from the first execution (also forces binary transfer for enabled types).
+
+<Note>
+The threshold is only used by `PreparedStatement` and `CallableStatement`. It is ignored for plain `Statement` objects.
+</Note>
+
+```java
+PreparedStatement pstmt = conn.prepareStatement("SELECT ?");
+org.postgresql.PGStatement pgStmt = pstmt.unwrap(org.postgresql.PGStatement.class);
+
+// Use server-side prepare from the 3rd execution onward
+pgStmt.setPrepareThreshold(3);
+```
+
+---
+
+```java
+boolean isUseServerPrepare()
+```
+
+Returns `true` if the **next** execution of this statement will use a server-side prepared statement, assuming the underlying protocol supports it.
+
+```java
+for (int i = 1; i <= 5; i++) {
+    pstmt.setInt(1, i);
+    boolean usingServerPrepare = pgStmt.isUseServerPrepare();
+    ResultSet rs = pstmt.executeQuery();
+    rs.next();
+    System.out.println("Execution " + i
+        + ", server-side: " + usingServerPrepare
+        + ", result: " + rs.getInt(1));
+    rs.close();
+}
+```
+
+---
+
+### Adaptive fetch
+
+```java
+boolean getAdaptiveFetch()
+void setAdaptiveFetch(boolean adaptiveFetch)
+```
+
+Gets or sets whether adaptive fetch is enabled for this statement. When enabled, the number of rows fetched per round trip is calculated dynamically to maximize use of `maxResultBuffer`. Existing `ResultSet` objects are not affected by changes.
+
+## Constants
+
+### Timestamp infinity
+
+PostgreSQL supports `infinity` and `-infinity` as special timestamp values. The JDBC driver represents these using the following constants and type mappings:
+
+| Java type | Negative infinity | Positive infinity |
+|---|---|---|
+| `java.time.LocalDateTime` | `LocalDateTime.MIN` | `LocalDateTime.MAX` |
+| `java.time.OffsetDateTime` | `OffsetDateTime.MIN` | `OffsetDateTime.MAX` |
+| `java.sql.Timestamp` | millisecond value == `DATE_NEGATIVE_INFINITY` | millisecond value == `DATE_POSITIVE_INFINITY` |
+
+```java
+long DATE_POSITIVE_INFINITY = 9223372036825200000L;
+long DATE_NEGATIVE_INFINITY = -9223372036832400000L;
+long DATE_POSITIVE_SMALLER_INFINITY = 185543533774800000L;
+long DATE_NEGATIVE_SMALLER_INFINITY = -185543533774800000L;
+```
+
+**Checking for infinity in a `ResultSet`:**
+
+```java
+java.sql.Timestamp ts = rs.getTimestamp("mycol");
+
+if (ts.getTime() == PGStatement.DATE_NEGATIVE_INFINITY) {
+    System.out.println("Value is -infinity");
+}
+if (ts.getTime() == PGStatement.DATE_POSITIVE_INFINITY) {
+    System.out.println("Value is +infinity");
+}
+```
+
+**Setting infinity via `LocalDateTime` or `OffsetDateTime`:**
+
+```java
+PreparedStatement ps = conn.prepareStatement("INSERT INTO events(ts) VALUES (?)");
+
+// Positive infinity
+ps.setObject(1, LocalDateTime.MAX);
+ps.executeUpdate();
+
+// Negative infinity
+ps.setObject(1, LocalDateTime.MIN);
+ps.executeUpdate();
+```
+
+## Complete example
+
+The following example demonstrates per-statement threshold control and observation of server-side prepare activation:
+
+```java
+import java.sql.*;
+
+public class ServerSidePreparedStatementExample {
+    public static void main(String[] args) throws Exception {
+        String url = "jdbc:postgresql://localhost:5432/test";
+        try (Connection conn = DriverManager.getConnection(url, "test", "")) {
+            try (PreparedStatement pstmt = conn.prepareStatement("SELECT ?")) {
+
+                // Access the PostgreSQL-specific interface
+                org.postgresql.PGStatement pgstmt =
+                    pstmt.unwrap(org.postgresql.PGStatement.class);
+
+                // Start using server-side statements on the 3rd execution
+                pgstmt.setPrepareThreshold(3);
+
+                for (int i = 1; i <= 5; i++) {
+                    pstmt.setInt(1, i);
+                    boolean usingServerPrepare = pgstmt.isUseServerPrepare();
+                    ResultSet rs = pstmt.executeQuery();
+                    rs.next();
+                    System.out.println("Execution: " + i
+                        + ", server-side: " + usingServerPrepare
+                        + ", result: " + rs.getInt(1));
+                    rs.close();
+                }
+            }
+        }
+    }
+}
+```
+
+Expected output:
+
+| Execution | Used server side | Result |
+|---|---|---|
+| 1 | false | 1 |
+| 2 | false | 2 |
+| 3 | true | 3 |
+| 4 | true | 4 |
+| 5 | true | 5 |
+
+## Setting threshold at multiple levels
+
+The prepare threshold can be configured at three levels, with each level inheriting from its parent:
+
+```java
+// 1. Connection URL level (affects all statements from this connection)
+String url = "jdbc:postgresql://localhost:5432/test?prepareThreshold=3";
+Connection conn = DriverManager.getConnection(url, "test", "");
+
+// 2. Connection level (overrides URL setting for new statements)
+org.postgresql.PGConnection pgconn = conn.unwrap(org.postgresql.PGConnection.class);
+pgconn.setPrepareThreshold(5);
+
+// 3. Statement level (overrides connection setting for this statement only)
+PreparedStatement pstmt = conn.prepareStatement("SELECT ?");
+org.postgresql.PGStatement pgstmt = pstmt.unwrap(org.postgresql.PGStatement.class);
+pgstmt.setPrepareThreshold(1);
+```

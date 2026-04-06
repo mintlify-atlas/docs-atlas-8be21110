@@ -1,0 +1,96 @@
+---
+title: "Logging"
+description: "Configure java.util.logging for the PostgreSQL JDBC Driver to capture driver-level trace information."
+keywords: ["logging", "java.util.logging", "pgjdbc", "debug", "trace"]
+---
+
+The PostgreSQL JDBC Driver uses the `java.util.logging` framework that is part of Java since JDK 1.4.
+This makes it a good choice for the driver since it adds no external dependency for a logging framework.
+
+<Note>
+  Logging support is primarily intended to debug the driver itself, not for general SQL query debugging.
+</Note>
+
+The root logger used by the pgJDBC driver is `org.postgresql`.
+
+## Log levels
+
+| Level | Description |
+|---|---|
+| `SEVERE` | Errors that prevent normal driver operation |
+| `WARNING` | Potential issues that do not stop execution |
+| `INFO` | General informational messages |
+| `FINE` | Detailed driver activity |
+| `FINEST` | All messages, including sensitive data |
+
+<Warning>
+  `FINEST` level may include sensitive information such as connection details, query SQL, and bind parameter values. Do not use this level in production environments where logs are accessible to unauthorized parties.
+</Warning>
+
+## Static configuration via logging.properties
+
+The default Java logging framework stores its configuration in a file called `logging.properties`. Settings are stored per line using a dot notation format. You can use a separate configuration file by specifying the `java.util.logging.config.file` property when starting the JVM.
+
+<Steps>
+  <Step title="Create logging.properties">
+    Create a `logging.properties` file with the following content:
+
+    ```properties
+    # Specify the handler, the handlers will be installed during VM startup.
+    handlers = java.util.logging.FileHandler
+
+    # Default global logging level.
+    .level = OFF
+
+    # Default file output is in user's home directory.
+    java.util.logging.FileHandler.pattern = %h/pgjdbc%u.log
+    java.util.logging.FileHandler.limit = 5000000
+    java.util.logging.FileHandler.count = 20
+    java.util.logging.FileHandler.formatter = java.util.logging.SimpleFormatter
+    java.util.logging.FileHandler.level = FINEST
+
+    java.util.logging.SimpleFormatter.format = %1$tY-%1$tm-%1$td %1$tH:%1$tM:%1$tS %4$s %2$s %5$s%6$s%n
+
+    # Facility specific properties.
+    org.postgresql.level = FINEST
+    ```
+  </Step>
+  <Step title="Pass the config file to the JVM">
+    Start your application with the `java.util.logging.config.file` system property pointing to your config file:
+
+    ```bash
+    java -jar -Djava.util.logging.config.file=logging.properties run.jar
+    ```
+  </Step>
+</Steps>
+
+## Dynamic configuration from code
+
+The Logging APIs also support dynamic configuration control, which allows you to update the logging configuration within a currently running program without restarting.
+
+You can load a `logging.properties` file from the classpath at runtime using `LogManager`:
+
+```java
+LogManager.getLogManager().readConfiguration(YourClass.class.getResourceAsStream("/logging.properties"));
+```
+
+Place a `logging.properties` file in your resources directory (so it ends up on the classpath) with content such as:
+
+```properties
+handlers=java.util.logging.FileHandler
+.level= INFO
+
+java.util.logging.FileHandler.level=FINEST
+java.util.logging.FileHandler.formatter=java.util.logging.SimpleFormatter
+java.util.logging.FileHandler.pattern=/tmp/debug.log
+
+java.util.logging.ConsoleHandler.level = INFO
+java.util.logging.ConsoleHandler.formatter = java.util.logging.SimpleFormatter
+org.postgresql.level = FINEST
+```
+
+Then call `readConfiguration` before establishing your database connections.
+
+<Note>
+  The `loggerLevel` and `loggerFile` connection properties that existed in older driver versions are no longer used. Configure logging exclusively through the `java.util.logging` mechanism described above.
+</Note>

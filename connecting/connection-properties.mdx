@@ -1,0 +1,211 @@
+---
+title: "Connection Properties"
+description: "Complete reference for PostgreSQL JDBC driver connection properties, including authentication, performance, query mode, and error handling options."
+keywords: ["connection properties", "jdbc properties", "postgresql driver configuration", "connection parameters"]
+---
+
+In addition to the standard connection parameters, the driver supports additional properties that control driver behavior specific to PostgreSQL. Properties may be specified either in the connection URL or in a `Properties` object passed to `DriverManager.getConnection`.
+
+<Note>
+If a property is specified both in the URL and in a `Properties` object, the value from the `Properties` object is ignored.
+</Note>
+
+## Passing properties
+
+<Tabs>
+  <Tab title="URL parameters">
+    ```java
+    String url = "jdbc:postgresql://localhost/test?user=fred&password=secret&ssl=true";
+    Connection conn = DriverManager.getConnection(url);
+    ```
+  </Tab>
+  <Tab title="Properties object">
+    ```java
+    String url = "jdbc:postgresql://localhost/test";
+    Properties props = new Properties();
+    props.setProperty("user", "fred");
+    props.setProperty("password", "secret");
+    props.setProperty("ssl", "true");
+    Connection conn = DriverManager.getConnection(url, props);
+    ```
+  </Tab>
+</Tabs>
+
+## Basic properties
+
+<ParamField path="user" type="string">
+  The database user on whose behalf the connection is being made.
+</ParamField>
+
+<ParamField path="password" type="string">
+  The database user's password.
+</ParamField>
+
+<ParamField path="options" type="string">
+  Specifies the `options` connection initialization parameter sent to the PostgreSQL server. For example, setting this to `-c statement_timeout=5min` sets the statement timeout for the session to 5 minutes. See [Client Connection Defaults](https://www.postgresql.org/docs/current/runtime-config-client.html) for details.
+
+  Values may contain spaces or special characters. Spaces separate command-line arguments unless escaped with a backslash (`\`); `\\` represents a literal backslash.
+
+  ```java
+  Properties props = new Properties();
+  props.setProperty("options", "-c search_path=test,public,pg_catalog -c statement_timeout=90000");
+  Connection conn = DriverManager.getConnection(url, props);
+  ```
+</ParamField>
+
+<ParamField path="service" type="string">
+  Specifies the service name described in the `pg_service.conf` file. A service file entry can supply all connection properties including `hostname`, `port`, and `dbname`. See [The Connection Service File](https://www.postgresql.org/docs/current/libpq-pgservice.html) for details.
+</ParamField>
+
+<ParamField path="ApplicationName" type="string" default="PostgreSQL JDBC Driver">
+  The name of the application using the connection. Database administrators can see connected applications and their resource usage through views like `pg_stat_activity`.
+</ParamField>
+
+## Authentication
+
+<ParamField path="requireAuth" type="string">
+  Comma-separated list of acceptable authentication methods. Use the `!` prefix to reject a method (e.g., `!password` to reject cleartext). Supported methods: `password`, `md5`, `gss`, `sspi`, `scram-sha-256`, `none`. Positive and negative options cannot be mixed.
+
+  **Examples:**
+  - `requireAuth=md5,scram-sha-256` — accept only MD5 or SCRAM-SHA-256
+  - `requireAuth=!password,!none` — reject cleartext and trust authentication
+</ParamField>
+
+<ParamField path="authenticationPluginClassName" type="string">
+  Fully qualified class name of a class implementing the `AuthenticationPlugin` interface. When set, this class is used to supply the password instead of the `password` connection property.
+</ParamField>
+
+## Performance
+
+<ParamField path="binaryTransfer" type="boolean" default="true">
+  Enable binary transfer for supported built-in types if possible. Setting this to `false` disables binary transfer unless it is individually activated per type with `binaryTransferEnable`. Binary transfer requires server-side prepared statements (see `prepareThreshold`).
+</ParamField>
+
+<ParamField path="prepareThreshold" type="integer" default="5">
+  Number of `PreparedStatement` executions required before switching to server-side prepared statements. The default of `5` means server-side prepared statements are used from the fifth execution of the same `PreparedStatement` object. A value of `-1` activates server-side prepared statements immediately and forces binary transfer for enabled types.
+</ParamField>
+
+<ParamField path="preparedStatementCacheQueries" type="integer" default="256">
+  Maximum number of queries cached per connection. When more than this number of distinct queries are used in `prepareStatement()` calls, the least recently used ones are discarded. Set to `0` to disable the cache.
+</ParamField>
+
+<ParamField path="reWriteBatchedInserts" type="boolean" default="false">
+  Rewrites batch inserts from multiple single-row `INSERT` statements into a single multi-row `INSERT`. For example:
+
+  ```sql
+  -- Before rewrite
+  INSERT INTO foo (col1, col2, col3) VALUES (1, 2, 3)
+  INSERT INTO foo (col1, col2, col3) VALUES (4, 5, 6)
+
+  -- After rewrite
+  INSERT INTO foo (col1, col2, col3) VALUES (1, 2, 3), (4, 5, 6)
+  ```
+
+  This provides a 2–3x performance improvement for batch inserts.
+</ParamField>
+
+## Read-only connections
+
+<ParamField path="readOnly" type="boolean" default="false">
+  Puts the connection in read-only mode.
+</ParamField>
+
+<ParamField path="readOnlyMode" type="string" default="transaction">
+  Controls behavior when a connection is set to read-only. Possible values:
+
+  - `ignore` — the `readOnly` setting has no effect
+  - `transaction` — when `readOnly=true` and autocommit is `false`, the driver sends `BEGIN READ ONLY` to start read-only transactions
+  - `always` — when `readOnly=true`, the session is set to `READ ONLY`; with autocommit `false`, the driver sends `BEGIN READ ONLY`
+</ParamField>
+
+## Query execution mode
+
+<ParamField path="preferQueryMode" type="string" default="extended">
+  Specifies the protocol mode used to execute queries. Possible values:
+
+  - `extended` — always use bind/execute messages (default)
+  - `extendedForPrepared` — use extended protocol for prepared statements only
+  - `extendedCacheEverything` — use extended protocol and cache every statement, including `Statement.execute(String sql)` calls
+  - `simple` — use simple query protocol (`Q` execute only, no parse/bind, text mode only)
+</ParamField>
+
+## Error handling and savepoints
+
+<ParamField path="autosave" type="string" default="never">
+  Specifies what the driver does when a query fails:
+
+  - `never` — no savepoint is set (default)
+  - `always` — a savepoint is set before each query; the driver rolls back to it on failure
+  - `conservative` — a savepoint is set before each query, but rollback only occurs for specific errors such as `cached statement cannot change return type` or `statement XXX is not valid`
+</ParamField>
+
+<ParamField path="cleanupSavepoints" type="boolean" default="false">
+  When `autosave` is enabled, the driver sets a `SAVEPOINT` before each query. With many queries this can exhaust server shared buffers. Setting `cleanupSavepoints=true` releases each savepoint before the next statement, at the cost of one additional round trip per query.
+</ParamField>
+
+## Timeout and network
+
+<ParamField path="connectTimeout" type="integer" default="10">
+  Timeout in seconds for socket connect operations. If connecting takes longer than this value, the connection is broken. A value of `0` disables the timeout.
+</ParamField>
+
+<ParamField path="socketTimeout" type="integer" default="0">
+  Timeout in seconds for socket read operations. If reading from the server takes longer than this value, the connection is closed. Can be used as a global query timeout or for detecting network problems. A value of `0` disables the timeout.
+</ParamField>
+
+<ParamField path="loginTimeout" type="integer" default="0">
+  How long in seconds to wait for a database connection to be established. A value of `0` means no timeout.
+</ParamField>
+
+<ParamField path="cancelSignalTimeout" type="integer" default="10">
+  Timeout in seconds for the cancel command. Cancel commands are sent out-of-band on their own connection and can themselves stall.
+</ParamField>
+
+<ParamField path="tcpKeepAlive" type="boolean" default="false">
+  Enable or disable TCP keep-alive probes on the connection.
+</ParamField>
+
+## Schema and server version
+
+<ParamField path="currentSchema" type="string">
+  Schema (or comma-separated list of schemas) to set in the `search_path`. Unqualified object names in statements are resolved against this schema.
+</ParamField>
+
+<ParamField path="assumeMinServerVersion" type="string">
+  Assume the server is at least the specified version. This enables optimizations at connection time, such as sending the application name in the startup message rather than as a separate post-connection query.
+</ParamField>
+
+## Full property reference
+
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `user` | String | null | Database user name |
+| `password` | String | null | Database user password |
+| `options` | String | null | Server startup options |
+| `service` | String | null | pg_service.conf service name |
+| `ApplicationName` | String | `PostgreSQL JDBC Driver` | Application name visible in pg_stat_activity |
+| `requireAuth` | String | null | Acceptable authentication methods |
+| `authenticationPluginClassName` | String | null | Custom authentication plugin class |
+| `binaryTransfer` | Boolean | true | Enable binary protocol for supported types |
+| `prepareThreshold` | Integer | 5 | Executions before switching to server-side prepared statements |
+| `preparedStatementCacheQueries` | Integer | 256 | Per-connection prepared statement cache size |
+| `reWriteBatchedInserts` | Boolean | false | Rewrite batch inserts into multi-row INSERT |
+| `readOnly` | Boolean | false | Enable read-only mode |
+| `readOnlyMode` | String | `transaction` | Controls read-only behavior: `ignore`, `transaction`, `always` |
+| `preferQueryMode` | String | `extended` | Query execution protocol: `extended`, `extendedForPrepared`, `extendedCacheEverything`, `simple` |
+| `autosave` | String | `never` | Savepoint strategy on query failure: `never`, `always`, `conservative` |
+| `cleanupSavepoints` | Boolean | false | Release savepoints to avoid server buffer exhaustion |
+| `connectTimeout` | Integer | 10 | Connection timeout in seconds |
+| `socketTimeout` | Integer | 0 | Socket read timeout in seconds |
+| `loginTimeout` | Integer | 0 | Login timeout in seconds |
+| `cancelSignalTimeout` | Integer | 10 | Cancel command timeout in seconds |
+| `tcpKeepAlive` | Boolean | false | Enable TCP keep-alive |
+| `currentSchema` | String | null | Schema search path |
+| `assumeMinServerVersion` | String | null | Minimum server version assumption for optimizations |
+| `targetServerType` | String | `any` | Server role filter: `any`, `primary`, `secondary`, `preferSecondary`, `preferPrimary` |
+| `loadBalanceHosts` | Boolean | false | Randomly select host from suitable candidates |
+| `hostRecheckSeconds` | Integer | 10 | How long to cache host state in seconds |
+| `logUnclosedConnections` | Boolean | false | Log stack trace for connections not explicitly closed |
+| `defaultRowFetchSize` | Integer | 0 | Rows fetched per database trip (0 = all at once) |
+| `stringtype` | String | null | Type used for `setString()` parameters: `VARCHAR` or `unspecified` |
+| `disableColumnSanitiser` | Boolean | false | Disable lowercase folding of column names in ResultSet |

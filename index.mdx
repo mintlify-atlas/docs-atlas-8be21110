@@ -1,97 +1,97 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "PostgreSQL JDBC Driver"
+description: "Connect Java applications to PostgreSQL with a pure Java, Type 4 JDBC driver. Standards-compliant, high-performance, and battle-tested."
 ---
 
-## Setting up
+The PostgreSQL JDBC Driver (PgJDBC) is an open-source, pure Java Type 4 driver that lets Java programs connect to a PostgreSQL database using standard, database-independent JDBC code. It communicates directly in the PostgreSQL native network protocol — no native libraries required.
 
-Get your documentation site up and running in minutes.
-
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
-
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Connect to PostgreSQL and run your first query in minutes
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Setup & Installation" icon="download" href="/setup">
+    Maven, Gradle, and manual installation instructions
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="Connection Properties" icon="sliders" href="/reference/all-properties">
+    Full reference of all connection configuration options
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="API Extensions" icon="puzzle-piece" href="/reference/pgconnection">
+    PostgreSQL-specific extensions beyond the JDBC standard
   </Card>
-</Columns>
+</CardGroup>
 
-## Create beautiful pages
+## What's in the driver
 
-Everything you need to create world-class documentation.
+<CardGroup cols={3}>
+  <Card title="SSL/TLS Security" icon="lock" href="/connecting/ssl">
+    Configure SSL modes from require to verify-full with certificate validation
+  </Card>
+  <Card title="Prepared Statements" icon="server" href="/executing/prepared-statements">
+    Automatic server-side statement caching and binary transfer
+  </Card>
+  <Card title="Connection Pooling" icon="database" href="/connecting/datasources">
+    Built-in DataSource and ConnectionPoolDataSource implementations
+  </Card>
+  <Card title="Logical Replication" icon="arrows-rotate" href="/advanced/replication">
+    Stream database changes in real-time using the replication API
+  </Card>
+  <Card title="COPY Protocol" icon="copy" href="/reference/copy-manager">
+    High-throughput bulk data import and export
+  </Card>
+  <Card title="LISTEN / NOTIFY" icon="bell" href="/advanced/listen-notify">
+    PostgreSQL inter-process communication from Java
+  </Card>
+</CardGroup>
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+## Get started in 3 steps
 
-## Need inspiration?
+<Steps>
+  <Step title="Add the dependency">
+    Add PgJDBC to your Maven or Gradle project from Maven Central:
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+    ```xml pom.xml
+    <dependency>
+      <groupId>org.postgresql</groupId>
+      <artifactId>postgresql</artifactId>
+      <version>42.7.10</version>
+    </dependency>
+    ```
+  </Step>
+  <Step title="Connect to your database">
+    Use the standard JDBC `DriverManager` with a PostgreSQL connection URL:
+
+    ```java
+    import java.sql.*;
+
+    Connection conn = DriverManager.getConnection(
+        "jdbc:postgresql://localhost:5432/mydb",
+        "myuser",
+        "mypassword"
+    );
+    ```
+  </Step>
+  <Step title="Run your first query">
+    Execute SQL and process results using standard JDBC interfaces:
+
+    ```java
+    try (Statement st = conn.createStatement();
+         ResultSet rs = st.executeQuery("SELECT version()")) {
+        if (rs.next()) {
+            System.out.println("Connected to: " + rs.getString(1));
+        }
+    }
+    ```
+  </Step>
+</Steps>
+
+## Supported versions
+
+| Component | Supported versions |
+|---|---|
+| PostgreSQL | 8.4 and higher (9.1+ recommended) |
+| Java | 8 (JDBC 4.2) and above |
+| JDBC spec | 4.2 |
+
+<Note>
+  PgJDBC versions since 42.8.0 are not guaranteed to work with PostgreSQL older than 9.1. For the best experience, use PostgreSQL 9.1 or later.
+</Note>

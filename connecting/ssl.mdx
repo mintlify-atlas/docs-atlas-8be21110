@@ -1,0 +1,216 @@
+---
+title: "Using SSL"
+description: "Configure SSL/TLS connections with the PostgreSQL JDBC driver, including SSL modes, client certificates, PKCS-12 keys, and custom socket factories."
+keywords: ["ssl", "tls", "sslmode", "client certificate", "sslcert", "sslkey", "sslrootcert", "postgresql ssl"]
+---
+
+Configuring the PostgreSQL server for SSL is covered in the [main PostgreSQL documentation](https://www.postgresql.org/docs/current/ssl-tcp.html). Before connecting from Java, verify the SSL connection works with `psql`:
+
+```bash
+$ ./bin/psql -h localhost -U postgres
+psql (14.5)
+SSL connection (protocol: TLSv1.2, cipher: ECDHE-RSA-AES256-GCM-SHA384, bits: 256, compression: off)
+Type "help" for help.
+
+postgres=#
+```
+
+## SSL modes
+
+The `sslmode` connection property controls the level of SSL security enforced by the driver. It mirrors the libpq `sslmode` parameter.
+
+| sslmode | Eavesdropping protection | MITM protection | When to use |
+|---|---|---|---|
+| `disable` | No | No | Security is not a concern and you don't want encryption overhead |
+| `allow` | Maybe | No | Security is not a concern but you'll use encryption if the server requires it |
+| `prefer` | Maybe | No | You don't require encryption but will use it if the server supports it |
+| `require` | Yes | No | You want encryption and trust the network to route you to the right server |
+| `verify-ca` | Yes | Depends on CA policy | You want encryption and to connect only to a trusted server |
+| `verify-full` | Yes | Yes | You want encryption and to verify both the server certificate and hostname |
+
+<Note>
+Setting `ssl=true` behaves the same as `sslmode=verify-full`. This is different from libpq, which defaults to a non-validating SSL connection.
+</Note>
+
+<Tip>
+`verify-full` is recommended in most security-sensitive environments.
+</Tip>
+
+## Configuring the client
+
+### Minimum configuration
+
+The simplest way to enable SSL is to set `ssl=true`. The driver will then validate both the server certificate and the hostname (equivalent to `verify-full`):
+
+<Tabs>
+  <Tab title="URL parameter">
+    ```java
+    String url = "jdbc:postgresql://localhost/test?ssl=true";
+    Connection conn = DriverManager.getConnection(url);
+    ```
+  </Tab>
+  <Tab title="Properties object">
+    ```java
+    String url = "jdbc:postgresql://localhost/test";
+    Properties props = new Properties();
+    props.setProperty("ssl", "true");
+    Connection conn = DriverManager.getConnection(url, props);
+    ```
+  </Tab>
+</Tabs>
+
+### SSL connection properties
+
+<ParamField path="ssl" type="boolean" default="false">
+  Connect using SSL. The server must have been compiled with SSL support. Setting `ssl=true` validates both the certificate and hostname (same as `verify-full`).
+</ParamField>
+
+<ParamField path="sslmode" type="string" default="prefer">
+  Controls the SSL security level. Possible values: `disable`, `allow`, `prefer`, `require`, `verify-ca`, `verify-full`.
+
+  `require`, `allow`, and `prefer` use a non-validating SSL factory and do not check the certificate or hostname. `verify-ca` validates the certificate but not the hostname. `verify-full` validates both.
+</ParamField>
+
+<ParamField path="sslcert" type="string" default="${user.home}/.postgresql/postgresql.crt">
+  Full path to the client SSL certificate file (PEM encoded X.509v3). Defaults to `${user.home}/.postgresql/postgresql.crt` on Unix and `%APPDATA%/postgresql/postgresql.crt` on Windows.
+
+  This parameter is ignored when using PKCS-12 keys, as the certificate is included in the key file.
+</ParamField>
+
+<ParamField path="sslkey" type="string" default="${user.home}/.postgresql/postgresql.pk8">
+  Full path to the client private key file. Must be in PKCS-12 (`.p12` or `.pfx` extension) or PKCS-8 DER format. PKCS-12 is recommended.
+
+  When using PKCS-12, the key alias **must** be `user`.
+</ParamField>
+
+<ParamField path="sslrootcert" type="string" default="${user.home}/.postgresql/root.crt">
+  File name of the SSL root certificate used to verify the server (PEM encoded X.509v3).
+</ParamField>
+
+<ParamField path="sslpassword" type="string">
+  Password for the client SSL key. Used by `ConsoleCallbackHandler` when the key file is encrypted.
+</ParamField>
+
+<ParamField path="sslNegotiation" type="string" default="postgres">
+  Controls how SSL negotiation is initiated. Possible values:
+
+  - `postgres` — traditional SSL negotiation: GSS is requested first, then SSL (default)
+  - `direct` — SSL is assumed from the start; an SSL packet is sent without first checking whether the server supports it, avoiding one round trip
+
+  `direct` requires PostgreSQL 17 or higher.
+</ParamField>
+
+<ParamField path="sslfactory" type="string" default="org.postgresql.ssl.LibPQFactory">
+  Class name of the `SSLSocketFactory` used when establishing an SSL connection. The class must extend `javax.net.ssl.SSLSocketFactory` and have a zero-argument constructor or a single-argument constructor taking a `Properties` argument.
+</ParamField>
+
+<ParamField path="sslhostnameverifier" type="string" default="org.postgresql.ssl.PGjdbcHostnameVerifier">
+  Class name of the hostname verifier.
+</ParamField>
+
+<ParamField path="sslpasswordcallback" type="string" default="org.postgresql.ssl.jdbc4.LibPQFactory.ConsoleCallbackHandler">
+  Class name of the SSL password provider.
+</ParamField>
+
+<ParamField path="sslResponseTimeout" type="integer" default="5000">
+  Time in milliseconds to wait for a response after requesting SSL from the server. If this value exceeds `connectTimeout`, `connectTimeout` is used instead.
+</ParamField>
+
+## Client certificates with PKCS-12
+
+As of version 42.2.9, PKCS-12 format is supported. The client key and certificate are stored together in a single file, which is specified with the `sslkey` parameter.
+
+<Warning>
+Recent versions of OpenSSL no longer support PKCS-8 keys. Use PKCS-12 keys (`.p12` or `.pfx` extension) instead.
+</Warning>
+
+Requirements:
+- File extension must be `.p12` (supported since 42.2.9) or `.pfx` (since 42.2.16)
+- The key alias **must** be `user` when exporting with `openssl pkcs12 -export`
+
+Example export command:
+
+```bash
+openssl pkcs12 -export -in postgresql.crt -inkey postgresql.key -out postgresql.p12 -name user \
+  -CAfile root.crt -caname local -passout pass:mypassword
+```
+
+A PEM key can be converted to PKCS-8 DER format with:
+
+```bash
+openssl pkcs8 -topk8 -inform PEM -in postgresql.key -outform DER -out postgresql.pk8 -v1 PBE-MD5-DES
+```
+
+## Configuring the Java truststore
+
+<Steps>
+  <Step title="Convert the server certificate to DER format">
+    ```bash
+    openssl x509 -in server.crt -out server.crt.der -outform der
+    ```
+  </Step>
+  <Step title="Import the certificate into the Java truststore">
+    Import into the system-wide cacerts truststore:
+
+    ```bash
+    keytool -keystore $JAVA_HOME/lib/security/cacerts -alias postgresql -import -file server.crt.der
+    ```
+
+    The default password for `cacerts` is `changeit`.
+  </Step>
+  <Step title="(Optional) Create a custom truststore">
+    If you do not have access to the system cacerts, create your own:
+
+    ```bash
+    keytool -keystore mystore -alias postgresql -import -file server.crt.der
+    ```
+
+    Pass the truststore to the JVM at startup:
+
+    ```bash
+    java -Djavax.net.ssl.trustStore=mystore -Djavax.net.ssl.trustStorePassword=mypassword com.mycompany.MyApp
+    ```
+  </Step>
+</Steps>
+
+<Tip>
+Add `-Djavax.net.debug=ssl` to the JVM command line for verbose SSL debugging output.
+</Tip>
+
+## Direct SSL negotiation (PostgreSQL 17+)
+
+For PostgreSQL 17 and later, you can use `sslNegotiation=direct` to skip the initial SSLRequest handshake and immediately begin SSL negotiation. This avoids one round trip:
+
+```java
+Properties props = new Properties();
+props.setProperty("sslmode", "require");
+props.setProperty("sslNegotiation", "direct");
+Connection conn = DriverManager.getConnection("jdbc:postgresql://localhost/test", props);
+```
+
+## Custom SSLSocketFactory
+
+PostgreSQL JDBC allows a custom `SSLSocketFactory` to provide certificates from a non-standard source or create a custom `SSLContext`. Specify the class name with the `sslfactory` parameter.
+
+The class must:
+- Extend `javax.net.ssl.SSLSocketFactory`
+- Have a zero-argument constructor, a constructor taking a `String`, or a constructor taking a `Properties` argument
+- Be available on the driver's classpath
+
+A simple default factory is included:
+
+```java
+props.setProperty("sslfactory", "org.postgresql.ssl.DefaultJavaSSLFactory");
+```
+
+### Non-validating factory for development
+
+<Warning>
+Only use this in development or when SSL certificate validation is not possible. It disables all SSL security checks.
+</Warning>
+
+Set `sslfactory=org.postgresql.ssl.NonValidatingFactory` to establish an SSL connection without any certificate or hostname validation:
+
+```java
+props.setProperty("sslfactory", "org.postgresql.ssl.NonValidatingFactory");
+```

@@ -1,0 +1,93 @@
+---
+title: "Multithreading and Servlet Environments"
+description: "How to safely use the PostgreSQL JDBC Driver in multithreaded applications and servlet containers."
+keywords: ["multithreading", "thread safety", "connection pool", "servlet", "HikariCP", "pgjdbc"]
+---
+
+<Warning>
+  The PostgreSQL JDBC Driver is **not thread-safe**. Sharing a single `Connection` object across multiple threads without external synchronization will produce unpredictable results.
+</Warning>
+
+## Why the driver is not thread-safe
+
+The PostgreSQL server is not internally threaded — each JDBC connection creates a new server process. Any concurrent requests to that server process must be serialized. The driver itself makes no guarantees that methods on `Connection`, `Statement`, or `ResultSet` objects are synchronized. It is the caller's responsibility to serialize all calls to the driver.
+
+## Rules for safe use
+
+- **One `Connection` per thread.** Never share a single `Connection` across threads without external synchronization.
+- **Do not share `Statement` objects across threads.** A `Statement` is bound to the `Connection` it was created from, and concurrent access from multiple threads is unsafe.
+- **`ResultSet` is tied to its `Statement`.** Closing or reusing a `Statement` while another thread is iterating a `ResultSet` from it will cause failures.
+- If you must share a connection, synchronize every call to the driver externally (e.g. with `synchronized` blocks or a `Lock`).
+
+<Note>
+  `org.postgresql.jdbc.TimestampUtils` is an exception — it is thread-safe and can be safely shared across threads.
+</Note>
+
+## Recommended pattern: connection pool per thread
+
+The standard solution for multithreaded and servlet environments is a connection pool. A pool manages a set of `Connection` objects and lends one to each thread for the duration of a request, then returns it when the thread is done.
+
+Popular connection pools that work well with the PostgreSQL JDBC Driver:
+
+- **HikariCP** — recommended for most applications, low overhead
+- **c3p0** — widely used, configurable
+- **Apache DBCP** — part of the Apache Commons project
+
+<CodeGroup>
+
+```java HikariCP example
+import com.zaxxer.hikari.HikariConfig;
+import com.zaxxer.hikari.HikariDataSource;
+
+HikariConfig config = new HikariConfig();
+config.setJdbcUrl("jdbc:postgresql://localhost:5432/mydb");
+config.setUsername("user");
+config.setPassword("secret");
+config.setMaximumPoolSize(10);
+
+HikariDataSource dataSource = new HikariDataSource(config);
+
+// In each thread / request:
+try (Connection conn = dataSource.getConnection()) {
+    // use conn — it is exclusive to this thread for the duration of this block
+}
+```
+
+```java c3p0 example
+import com.mchange.v2.c3p0.ComboPooledDataSource;
+
+ComboPooledDataSource cpds = new ComboPooledDataSource();
+cpds.setDriverClass("org.postgresql.Driver");
+cpds.setJdbcUrl("jdbc:postgresql://localhost:5432/mydb");
+cpds.setUser("user");
+cpds.setPassword("secret");
+cpds.setMaxPoolSize(10);
+
+// In each thread / request:
+try (Connection conn = cpds.getConnection()) {
+    // use conn — it is exclusive to this thread for the duration of this block
+}
+```
+
+</CodeGroup>
+
+## Servlet environment recommendations
+
+<Steps>
+  <Step title="Initialize a DataSource at application startup">
+    Create a single `DataSource` (backed by a connection pool) in your servlet context listener or application initializer, and store it as a context attribute.
+  </Step>
+  <Step title="Borrow a connection per request">
+    In each servlet `doGet` / `doPost` method, borrow one connection from the pool using `dataSource.getConnection()`.
+  </Step>
+  <Step title="Return the connection when the request is done">
+    Always close the `Connection` in a `finally` block or try-with-resources so it is returned to the pool. Do not cache connections in instance variables of the servlet.
+  </Step>
+  <Step title="Close Statement and ResultSet objects in the same thread">
+    Open, use, and close `Statement` and `ResultSet` objects within the same thread that owns the `Connection`. Never pass them to another thread.
+  </Step>
+</Steps>
+
+<Warning>
+  Storing a `Connection` in a servlet instance field or a static field and sharing it across requests is a common mistake that leads to data corruption, "connection closed" errors, and race conditions under load.
+</Warning>

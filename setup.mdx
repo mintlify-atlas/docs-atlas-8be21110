@@ -1,0 +1,237 @@
+---
+title: "Setting up the JDBC driver"
+description: "Install PgJDBC via Maven, Gradle, or direct JAR download. Build from source, configure the classpath, and prepare your PostgreSQL server for JDBC connections."
+---
+
+This page describes the steps you need to take before you can write or run programs that use the JDBC interface.
+
+## Getting the driver
+
+<Tabs>
+
+<Tab title="Maven">
+
+Add the following dependency to your `pom.xml`:
+
+```xml
+<dependency>
+  <groupId>org.postgresql</groupId>
+  <artifactId>postgresql</artifactId>
+  <version>42.7.10</version>
+</dependency>
+```
+
+Search for the latest version on [Maven Central](https://central.sonatype.com/artifact/org.postgresql/postgresql).
+
+</Tab>
+
+<Tab title="Gradle">
+
+Add the dependency to your `build.gradle.kts`:
+
+```kotlin
+implementation("org.postgresql:postgresql:42.7.10")
+```
+
+Or in Groovy `build.gradle`:
+
+```groovy
+implementation 'org.postgresql:postgresql:42.7.10'
+```
+
+</Tab>
+
+<Tab title="Direct JAR download">
+
+Download the precompiled driver JAR from the [PostgreSQL JDBC site](https://jdbc.postgresql.org/download/).
+
+The JAR is named `postgresql-MM.nn.pp.jar`, where `MM` is the major version, `nn` is the minor version, and `pp` is the patch version.
+
+Once downloaded, add the JAR to your classpath as described in [setting up the classpath](#setting-up-the-classpath).
+
+</Tab>
+
+</Tabs>
+
+## Building from source
+
+You should only need to build from source if you are making changes to the driver itself.
+
+**Requirements:**
+- Gradle (the wrapper `gradlew` is included in the repository)
+- JDK 1.8 or later
+
+<Steps>
+
+<Step title="Clone the repository">
+
+```bash
+git clone https://github.com/pgjdbc/pgjdbc.git
+cd pgjdbc
+```
+
+</Step>
+
+<Step title="Compile the driver">
+
+To compile without running tests:
+
+```bash
+gradlew assemble
+```
+
+To compile and run the full test suite:
+
+```bash
+gradlew build
+```
+
+<Tip>
+  To skip test execution, add `-DskipTests`:
+
+  ```bash
+  gradlew build -DskipTests
+  ```
+</Tip>
+
+</Step>
+
+<Step title="Locate the output JAR">
+
+The compiled driver is placed at:
+
+```
+pgjdbc/build/libs/postgresql-MM.nn.pp.jar
+```
+
+</Step>
+
+</Steps>
+
+<Note>
+  If you have multiple Java compilers installed, the build uses the first one found on the `PATH`. To use a specific JDK, set the `JAVA_HOME` environment variable before running Gradle:
+
+  ```bash
+  JAVA_HOME=/usr/local/jdk1.8.0_45
+  gradlew assemble
+  ```
+</Note>
+
+### Maven-based source distribution
+
+For situations where Gradle is not available (such as building PgJDBC for Linux distributions), a Maven-based source release can be generated:
+
+```bash
+gradlew -d :postgresql:sourceDistribution -Prelease -Psigning.gpg.enabled=OFF
+```
+
+The resulting `*-src.tar.gz` is placed in `pgjdbc/build/distributions/`. Build the driver from it using:
+
+```bash
+mvn package
+# or, to skip tests:
+mvn -DskipTests package
+```
+
+Source distributions are also published to the [Maven Central repository](https://repo1.maven.org/maven2/org/postgresql/postgresql/).
+
+## Setting up the classpath
+
+For projects not using Maven or Gradle, you need to add the driver JAR to your classpath manually.
+
+**Using the `CLASSPATH` environment variable:**
+
+```bash
+export CLASSPATH=/usr/local/lib/myapp.jar:/usr/local/pgsql/share/java/postgresql-42.7.10.jar:.
+java MyApp
+```
+
+**Using the `java` command `-cp` flag:**
+
+```bash
+java -cp /usr/local/lib/myapp.jar:/usr/local/pgsql/share/java/postgresql-42.7.10.jar:. MyApp
+```
+
+## Loading the driver
+
+Applications do **not** need to explicitly load the `org.postgresql.Driver` class. Since Java 6, the driver JAR uses the Java Service Provider mechanism — the JVM loads the driver automatically when your application establishes a connection to PostgreSQL, as long as the JAR is on the classpath.
+
+<Note>
+  Prior to Java 1.6, the driver had to be loaded explicitly by the application using one of these approaches (still supported but no longer necessary):
+
+  ```java
+  // Option 1: Class.forName
+  Class.forName("org.postgresql.Driver");
+
+  // Option 2: JVM parameter
+  // java -Djdbc.drivers=org.postgresql.Driver MyApp
+  ```
+</Note>
+
+## Preparing the database server for JDBC
+
+Java does not support Unix domain sockets, so the PostgreSQL server must be configured to accept TCP/IP connections.
+
+**Enable TCP/IP connections:**
+
+Starting with PostgreSQL 8.0, TCP/IP connections from `localhost` are allowed by default. To accept connections on other network interfaces, edit `postgresql.conf`:
+
+```
+listen_addresses = '*'    # or specify a specific IP address
+```
+
+**Configure client authentication:**
+
+Edit `pg_hba.conf` to allow the connecting user to authenticate. Refer to the [PostgreSQL documentation on pg_hba.conf](https://www.postgresql.org/docs/current/auth-pg-hba-conf.html) for the full syntax.
+
+A typical entry for local development:
+
+```
+# TYPE  DATABASE  USER      ADDRESS       METHOD
+host    mydb      myuser    127.0.0.1/32  scram-sha-256
+```
+
+<Warning>
+  After editing `postgresql.conf` or `pg_hba.conf`, reload the server configuration:
+
+  ```bash
+  pg_ctl reload
+  # or:
+  SELECT pg_reload_conf();
+  ```
+</Warning>
+
+## Creating a database
+
+When creating a database for use with JDBC, choose an appropriate character encoding. Java enforces correct encoding and will fail if the database encoding is incompatible.
+
+<Warning>
+  Do **not** use `SQL_ASCII` encoding. It is not a real encoding and will cause problems when storing data outside the 7-bit ASCII character set.
+</Warning>
+
+Use `UTF-8` (or `UNICODE`) as the default encoding:
+
+```sql
+CREATE DATABASE mydb ENCODING 'UTF8';
+```
+
+Or using `createdb` from the command line:
+
+```bash
+createdb -E UTF8 mydb
+```
+
+<Tip>
+  If you are unsure what encoding your data will use, `UTF-8` is a safe and widely compatible default.
+</Tip>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Establish your first connection and run a query.
+  </Card>
+  <Card title="Connection properties" icon="sliders" href="/connecting/connection-properties">
+    Configure SSL, timeouts, pooling, and other connection options.
+  </Card>
+</CardGroup>

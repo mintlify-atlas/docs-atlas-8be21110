@@ -1,0 +1,176 @@
+---
+title: "Performance Tuning"
+description: "Connection properties and techniques to improve throughput and latency with the PostgreSQL JDBC Driver."
+keywords: ["performance", "prepared statements", "binary transfer", "batch inserts", "fetch size", "pgjdbc"]
+---
+
+The PostgreSQL JDBC Driver exposes a number of connection properties that directly affect query throughput and memory usage.
+This page covers the most impactful tuning knobs and recommended configurations.
+
+## Server-side prepared statements
+
+The PostgreSQL server can compile SQL statements that are expected to be reused, avoiding the overhead of parsing and planning on every execution.
+
+The driver tracks how many times each `PreparedStatement` has been executed. When the count reaches `prepareThreshold` (default `5`), the driver switches to a named server-side prepared statement.
+
+Server-side prepared statements improve performance because:
+
+1. The driver sends just a statement handle (e.g. `S_1`) instead of the full SQL text.
+2. Binary transfer is enabled — parameters and results are much faster to parse.
+3. The server reuses the execution plan across calls.
+4. The client can reuse result set column metadata, avoiding a round trip on each execution.
+
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `prepareThreshold` | Integer | `5` | Number of executions before switching to a server-side prepared statement. Set to `0` to disable. Set to `-1` to force server-side preparation and binary transfer immediately. |
+
+<CodeGroup>
+
+```java Set threshold in the connection URL
+String url = "jdbc:postgresql://localhost:5432/test?prepareThreshold=3";
+Connection conn = DriverManager.getConnection(url, "test", "");
+```
+
+```java Set threshold on the connection object
+org.postgresql.PGConnection pgconn = conn.unwrap(org.postgresql.PGConnection.class);
+pgconn.setPrepareThreshold(5);
+```
+
+```java Set threshold on a specific statement
+PreparedStatement pstmt = conn.prepareStatement("SELECT ?");
+org.postgresql.PGStatement pgstmt = pstmt.unwrap(org.postgresql.PGStatement.class);
+pgstmt.setPrepareThreshold(3);
+```
+
+</CodeGroup>
+
+<Tip>
+  Reusing the same `PreparedStatement` object across multiple executions (rather than closing and re-creating it) allows the driver to count executions correctly and reach the threshold faster.
+</Tip>
+
+## Binary transfer
+
+Binary encoding is significantly faster than text encoding for numeric types, timestamps, and arrays.
+
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `binaryTransfer` | Boolean | `true` | Enable binary transfer for all supported built-in types. Requires server-side prepared statements. |
+| `binaryTransferEnable` | String | `""` | Comma-separated list of OID numbers or type names to enable binary transfer for. |
+| `binaryTransferDisable` | String | `""` | Comma-separated list of OID numbers or type names to disable binary transfer for. Overrides `binaryTransferEnable`. |
+
+```
+jdbc:postgresql://localhost/mydb?binaryTransferDisable=interval
+```
+
+## Statement cache
+
+The driver maintains a per-connection cache of prepared statement metadata to avoid re-parsing on `connection.prepareStatement(...)` calls.
+
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `preparedStatementCacheQueries` | Integer | `256` | Maximum number of entries in the per-connection statement cache. Set to `0` to disable. |
+| `preparedStatementCacheSizeMiB` | Integer | `5` | Maximum client-side cache size in megabytes per connection. Set to `0` to disable. |
+
+Only a subset of the statement cache reaches the server-side `prepareThreshold`; the rest are cached on the client only.
+
+## Batch inserts
+
+For workloads that batch many `INSERT` statements, enabling `reWriteBatchedInserts` can yield a 2–3x throughput improvement by collapsing compatible inserts into a single multi-row `INSERT`.
+
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `reWriteBatchedInserts` | Boolean | `false` | Rewrite and collapse compatible batched `INSERT` statements. |
+
+```
+jdbc:postgresql://localhost/mydb?reWriteBatchedInserts=true
+```
+
+## Fetch size and cursors
+
+By default the driver fetches all rows for a query into memory. For large result sets, configuring a fetch size causes the driver to open a server-side cursor and retrieve rows in pages.
+
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `defaultRowFetchSize` | Integer | `0` | Number of rows fetched per round trip. `0` means fetch all rows at once. |
+| `adaptiveFetch` | Boolean | `false` | Dynamically adjust the fetch size based on observed row size and `maxResultBuffer`. Requires `maxResultBuffer` and `defaultRowFetchSize` to be set. |
+| `adaptiveFetchMinimum` | Integer | `0` | Minimum number of rows the adaptive fetch algorithm may use. |
+| `adaptiveFetchMaximum` | Integer | `-1` | Maximum number of rows the adaptive fetch algorithm may use. Negative values are treated as unlimited. |
+
+```
+jdbc:postgresql://localhost/mydb?defaultRowFetchSize=100&adaptiveFetch=true&maxResultBuffer=50M
+```
+
+## Memory management
+
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `maxResultBuffer` | String | `null` | Maximum size of the result buffer. Accepts absolute values (`100`, `200M`, `2G`) or a percentage of max heap (`10p`, `20pct`, `50percent`). |
+
+<Warning>
+  Without `maxResultBuffer`, the driver may load an entire large result set into the JVM heap, causing `OutOfMemoryError` for very large queries.
+</Warning>
+
+## Query execution mode
+
+`preferQueryMode` controls which wire protocol the driver uses to execute queries.
+
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `preferQueryMode` | String | `extended` | Execution mode. Options: `extended`, `extendedForPrepared`, `extendedCacheEverything`, `simple`. |
+
+| Value | Behaviour |
+|---|---|
+| `extended` | Uses the extended query protocol for all queries. Default. |
+| `extendedForPrepared` | Extended protocol only for `PreparedStatement`; simple protocol for `Statement`. |
+| `extendedCacheEverything` | Also server-prepares queries issued via `Statement`. Useful for diagnostic purposes. |
+| `simple` | Uses the simple query protocol for everything. Required for replication connections. |
+
+## Connection setup
+
+### Skip server version detection
+
+By default the driver queries the server version on every new connection. Setting `assumeMinServerVersion` skips this round trip when you know the minimum server version.
+
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `assumeMinServerVersion` | String | `null` | Assume the server is at least this version (e.g. `"9.4"`). Skips version detection queries. |
+
+### ApplicationName startup optimization
+
+If `assumeMinServerVersion` is set to `9.0` or later, `ApplicationName` is sent in the startup packet rather than in a separate round trip after the connection is established.
+
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `ApplicationName` | String | `PostgreSQL JDBC Driver` | The application name sent to the server (requires server >= 9.0). |
+
+## Network tuning
+
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `sendBufferSize` | Integer | `-1` | Socket write buffer size in bytes. `-1` uses the OS default. |
+| `receiveBufferSize` | Integer | `-1` | Socket read buffer size in bytes. `-1` uses the OS default. |
+| `maxSendBufferSize` | Integer | `65536` | Maximum bytes buffered before sending. The driver uses `least(maxSendBufferSize, greatest(8192, SO_SNDBUF))`. |
+| `tcpNoDelay` | Boolean | `true` | Disable Nagle's algorithm. Recommended to keep enabled for latency-sensitive workloads. |
+
+## Load balancing read replicas
+
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `loadBalanceHosts` | Boolean | `false` | When multiple hosts are specified in the JDBC URL, randomly select among suitable candidates rather than always trying them in order. |
+| `targetServerType` | String | `any` | Filter candidates by role: `any`, `primary`, `secondary`, `preferSecondary`, `preferPrimary`. |
+
+```
+jdbc:postgresql://primary:5432,replica1:5432,replica2:5432/mydb?loadBalanceHosts=true&targetServerType=preferSecondary
+```
+
+## Key recommendations
+
+<Tip>
+  Start with these settings for most OLTP workloads:
+
+  - Leave `prepareThreshold=5` (default) and reuse `PreparedStatement` objects.
+  - Enable `reWriteBatchedInserts=true` for bulk insert workloads.
+  - Set `defaultRowFetchSize=100` (or higher) for queries that return large result sets.
+  - Set `assumeMinServerVersion` to match your oldest PostgreSQL server.
+  - Keep `tcpNoDelay=true` (default) to avoid Nagle latency on small packets.
+</Tip>

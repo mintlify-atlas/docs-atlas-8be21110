@@ -1,0 +1,224 @@
+---
+title: "Batch Operations"
+description: "Execute multiple SQL statements efficiently using JDBC batch APIs and the reWriteBatchedInserts optimisation in the PostgreSQL JDBC driver."
+keywords: ["batch", "addBatch", "executeBatch", "reWriteBatchedInserts", "BatchUpdateException", "COPY", "bulk insert"]
+---
+
+Batching lets you send multiple SQL statements to the server in a single round trip, reducing network overhead and improving throughput for bulk operations.
+
+## PreparedStatement batch operations
+
+<Steps>
+  <Step title="Prepare the statement">
+    Create a `PreparedStatement` with the SQL template you want to repeat.
+
+    ```java
+    PreparedStatement ps = conn.prepareStatement(
+        "INSERT INTO products (name, price) VALUES (?, ?)"
+    );
+    ```
+  </Step>
+  <Step title="Bind parameters and call addBatch()">
+    For each row, set parameters and call `addBatch()` to queue the execution.
+
+    ```java
+    ps.setString(1, "Widget A");
+    ps.setDouble(2, 9.99);
+    ps.addBatch();
+
+    ps.setString(1, "Widget B");
+    ps.setDouble(2, 14.49);
+    ps.addBatch();
+    ```
+  </Step>
+  <Step title="Execute the batch">
+    Call `executeBatch()` to send all queued statements to the server at once. The method returns an `int[]` with the row count for each statement.
+
+    ```java
+    int[] updateCounts = ps.executeBatch();
+    ps.close();
+    ```
+  </Step>
+</Steps>
+
+### Full example
+
+```java PreparedStatement batch insert
+conn.setAutoCommit(false);
+
+PreparedStatement ps = conn.prepareStatement(
+    "INSERT INTO products (name, price) VALUES (?, ?)"
+);
+
+ps.setString(1, "Widget A");
+ps.setDouble(2, 9.99);
+ps.addBatch();
+
+ps.setString(1, "Widget B");
+ps.setDouble(2, 14.49);
+ps.addBatch();
+
+ps.setString(1, "Widget C");
+ps.setDouble(2, 4.99);
+ps.addBatch();
+
+int[] counts = ps.executeBatch();
+conn.commit();
+ps.close();
+```
+
+## Statement batch operations
+
+Plain `Statement` also supports batching for cases where each SQL string differs.
+
+```java Statement batch
+conn.setAutoCommit(false);
+
+Statement st = conn.createStatement();
+st.addBatch("INSERT INTO audit_log (event) VALUES ('login')");
+st.addBatch("UPDATE users SET last_seen = NOW() WHERE id = 42");
+st.addBatch("DELETE FROM sessions WHERE expired_at < NOW()");
+
+int[] counts = st.executeBatch();
+conn.commit();
+st.close();
+```
+
+## reWriteBatchedInserts
+
+Setting `reWriteBatchedInserts=true` tells the driver to collapse multiple compatible `INSERT` statements from a `PreparedStatement` batch into a single multi-value `INSERT`:
+
+```sql Before rewrite (one round-trip per row)
+INSERT INTO foo (col) VALUES (1);
+INSERT INTO foo (col) VALUES (2);
+INSERT INTO foo (col) VALUES (3);
+```
+
+```sql After rewrite (single statement)
+INSERT INTO foo (col) VALUES (1),(2),(3);
+```
+
+This typically delivers a **2–3× performance improvement** for large batches.
+
+Enable it in the connection URL:
+
+```
+jdbc:postgresql://localhost:5432/mydb?reWriteBatchedInserts=true
+```
+
+Or via `Properties`:
+
+```java Enable reWriteBatchedInserts
+Properties props = new Properties();
+props.setProperty("user", "myuser");
+props.setProperty("password", "mypassword");
+props.setProperty("reWriteBatchedInserts", "true");
+
+Connection conn = DriverManager.getConnection(
+    "jdbc:postgresql://localhost:5432/mydb", props
+);
+```
+
+<Note>
+  `reWriteBatchedInserts` only applies to `PreparedStatement` batches of `INSERT` statements with identical SQL text. Mixed statement types or `Statement` batches are not rewritten.
+</Note>
+
+## Best practices
+
+<AccordionGroup>
+  <Accordion title="Use consistent parameter types">
+    The server optimises execution plans for the parameter types it receives. Alternating between types (for example `setString` in one iteration and `setInt` in another for the same placeholder) forces the driver to invalidate and re-prepare the server-side statement mid-batch, which negates most of the batching benefit.
+
+    Always use the same `setXxx()` method for a given placeholder across all iterations.
+  </Accordion>
+
+  <Accordion title="Handle null values consistently">
+    When a value is `null`, always pass `setNull(pos, Types.X)` with the **same** `Types` constant you use for non-null values on the same placeholder. Using a different type code for nulls changes the parameter type seen by the server and forces re-preparation.
+
+    ```java Correct null handling
+    // Always use Types.VARCHAR for position 1
+    if (name != null) {
+        ps.setString(1, name);
+    } else {
+        ps.setNull(1, Types.VARCHAR);  // match the non-null type
+    }
+    ps.addBatch();
+    ```
+  </Accordion>
+
+  <Accordion title="Wrap batches in a transaction">
+    Always disable autocommit and commit manually around a batch. This ensures atomicity and dramatically reduces overhead because the server does not flush to disk after every statement.
+
+    ```java Transaction wrapping
+    conn.setAutoCommit(false);
+    try {
+        // ... addBatch() calls ...
+        ps.executeBatch();
+        conn.commit();
+    } catch (BatchUpdateException e) {
+        conn.rollback();
+        throw e;
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Error handling with BatchUpdateException
+
+If one or more statements in a batch fail, the driver throws `BatchUpdateException`. The `getUpdateCounts()` method returns an `int[]` where failed statements have `Statement.EXECUTE_FAILED` (-3).
+
+```java BatchUpdateException handling
+try {
+    int[] counts = ps.executeBatch();
+} catch (BatchUpdateException e) {
+    System.err.println("Batch failed: " + e.getMessage());
+
+    int[] counts = e.getUpdateCounts();
+    for (int i = 0; i < counts.length; i++) {
+        if (counts[i] == Statement.EXECUTE_FAILED) {
+            System.err.println("Statement " + i + " failed");
+        } else {
+            System.err.println("Statement " + i + " updated " + counts[i] + " row(s)");
+        }
+    }
+    conn.rollback();
+}
+```
+
+<Warning>
+  PostgreSQL stops processing a batch on the first error. Statements after the failing one will have `EXECUTE_FAILED` in the update counts array. Use a transaction and roll back on failure to ensure a consistent state.
+</Warning>
+
+## Very large bulk inserts — COPY
+
+For extremely large data loads, the PostgreSQL `COPY` protocol is far more efficient than any `INSERT`-based approach. The driver exposes this via `CopyManager`, accessible through `PGConnection`.
+
+```java COPY for bulk insert
+/*
+ * DDL: CREATE TABLE copytest (stringvalue text, intvalue int, numvalue numeric(5,2));
+ */
+private static String[] origData = {
+    "First Row\t1\t1.10\n",
+    "Second Row\t2\t-22.20\n",
+    "\\N\t\\N\t\\N\n",
+    "\t4\t444.40\n"
+};
+
+try (Connection con = DriverManager.getConnection(url, "postgres", "somepassword")) {
+    PGConnection pgConnection = con.unwrap(org.postgresql.PGConnection.class);
+    CopyManager copyAPI = pgConnection.getCopyAPI();
+    CopyIn cp = copyAPI.copyIn("COPY copytest FROM STDIN");
+
+    for (String row : origData) {
+        byte[] buf = row.getBytes();
+        cp.writeToCopy(buf, 0, buf.length);
+    }
+
+    long updatedRows = cp.endCopy();
+    System.out.println("Copied " + updatedRows + " rows");
+}
+```
+
+<Tip>
+  Use `COPY` when inserting millions of rows. For smaller batches (hundreds to low thousands), `reWriteBatchedInserts=true` with `PreparedStatement` batching is simpler and already very fast.
+</Tip>

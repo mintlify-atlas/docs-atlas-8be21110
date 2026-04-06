@@ -1,0 +1,159 @@
+---
+title: "Geometric Data Types"
+description: "Store and retrieve PostgreSQL geometric types such as points, circles, lines, and polygons from Java using the pgjdbc driver."
+keywords: ["geometric", "PGpoint", "PGcircle", "PGline", "PGpolygon", "geometry", "pgjdbc", "jdbc"]
+---
+
+PostgreSQL has a set of data types that can store geometric features into a table. These include single points, lines, and polygons. The pgjdbc driver supports these types through the `org.postgresql.geometric` package.
+
+## Available geometric types
+
+| PostgreSQL type | Java class | Description |
+|---|---|---|
+| `point` | `PGpoint` | A point in 2D space with `x` and `y` coordinates |
+| `circle` | `PGcircle` | A circle with a center `PGpoint` and a `radius` |
+| `line` | `PGline` | An infinite line represented as `Ax + By + C = 0` |
+| `lseg` | `PGlseg` | A finite line segment defined by two endpoints |
+| `box` | `PGbox` | A rectangular box defined by two opposite corners |
+| `polygon` | `PGpolygon` | A closed polygon defined by a list of points |
+| `path` | `PGpath` | An open or closed path defined by a sequence of points |
+
+All classes are in the `org.postgresql.geometric` package.
+
+## Inserting geometric values
+
+Use `PreparedStatement.setObject()` to bind any geometric type:
+
+```java
+import org.postgresql.geometric.PGpoint;
+import org.postgresql.geometric.PGcircle;
+
+PGpoint center = new PGpoint(1, 2.5);
+double radius = 4;
+PGcircle circle = new PGcircle(center, radius);
+
+try (PreparedStatement ps = conn.prepareStatement(
+        "INSERT INTO geomtest(mycirc) VALUES (?)")) {
+    ps.setObject(1, circle);
+    ps.executeUpdate();
+}
+```
+
+## Retrieving geometric values
+
+Use `ResultSet.getObject()` and cast to the appropriate class:
+
+```java
+try (Statement stmt = conn.createStatement();
+     ResultSet rs = stmt.executeQuery(
+         "SELECT mycirc, area(mycirc) FROM geomtest")) {
+    while (rs.next()) {
+        PGcircle circle = (PGcircle) rs.getObject(1);
+        double area = rs.getDouble(2);
+
+        System.out.println("Center (X, Y) = (" + circle.center.x + ", " + circle.center.y + ")");
+        System.out.println("Radius = " + circle.radius);
+        System.out.println("Area = " + area);
+    }
+}
+```
+
+## Complete example
+
+<CodeGroup>
+
+```java GeometricTest.java
+import java.sql.*;
+
+import org.postgresql.geometric.PGpoint;
+import org.postgresql.geometric.PGcircle;
+
+public class GeometricTest {
+    public static void main(String args[]) throws Exception {
+        String url = "jdbc:postgresql://localhost:5432/test";
+        try (Connection conn = DriverManager.getConnection(url, "test", "")) {
+            try (Statement stmt = conn.createStatement()) {
+                stmt.execute("CREATE TEMP TABLE geomtest(mycirc circle)");
+            }
+            insertCircle(conn);
+            retrieveCircle(conn);
+        }
+    }
+
+    private static void insertCircle(Connection conn) throws SQLException {
+        PGpoint center = new PGpoint(1, 2.5);
+        double radius = 4;
+        PGcircle circle = new PGcircle(center, radius);
+        try (PreparedStatement ps = conn.prepareStatement(
+                "INSERT INTO geomtest(mycirc) VALUES (?)")) {
+            ps.setObject(1, circle);
+            ps.executeUpdate();
+        }
+    }
+
+    private static void retrieveCircle(Connection conn) throws SQLException {
+        try (Statement stmt = conn.createStatement()) {
+            try (ResultSet rs = stmt.executeQuery(
+                    "SELECT mycirc, area(mycirc) FROM geomtest")) {
+                while (rs.next()) {
+                    PGcircle circle = (PGcircle) rs.getObject(1);
+                    double area = rs.getDouble(2);
+
+                    System.out.println("Center (X, Y) = (" + circle.center.x + ", " + circle.center.y + ")");
+                    System.out.println("Radius = " + circle.radius);
+                    System.out.println("Area = " + area);
+                }
+            }
+        }
+    }
+}
+```
+
+</CodeGroup>
+
+## Constructing geometric objects
+
+### PGpoint
+
+```java
+// PGpoint(double x, double y)
+PGpoint p = new PGpoint(3.0, 4.5);
+System.out.println(p.x); // 3.0
+System.out.println(p.y); // 4.5
+```
+
+### PGcircle
+
+```java
+// PGcircle(PGpoint center, double radius)
+PGpoint center = new PGpoint(0, 0);
+PGcircle circle = new PGcircle(center, 5.0);
+System.out.println(circle.center); // (0.0,0.0)
+System.out.println(circle.radius); // 5.0
+```
+
+### Other types
+
+Most geometric classes follow the same pattern — construct with the relevant parameters and use `setObject()` / `getObject()`. Refer to the [Javadoc](http://javadoc.io/doc/org.postgresql/postgresql) for the full API of each class, including string-based constructors that accept the PostgreSQL literal syntax (e.g., `new PGpolygon("((0,0),(1,0),(1,1),(0,1))")`).
+
+<Accordion title="Using PostgreSQL geometric functions">
+
+PostgreSQL provides a rich set of geometric operators and functions. You can call them directly in SQL and read the results:
+
+```java
+try (PreparedStatement ps = conn.prepareStatement(
+        "SELECT area(?::circle), center(?::circle)")) {
+    ps.setObject(1, new PGcircle(new PGpoint(0, 0), 5.0));
+    ps.setObject(2, new PGcircle(new PGpoint(0, 0), 5.0));
+    try (ResultSet rs = ps.executeQuery()) {
+        if (rs.next()) {
+            double area = rs.getDouble(1);
+            PGpoint center = (PGpoint) rs.getObject(2);
+            System.out.println("Area: " + area);
+            System.out.println("Center: (" + center.x + ", " + center.y + ")");
+        }
+    }
+}
+```
+
+</Accordion>

@@ -1,0 +1,241 @@
+---
+title: "CopyManager API"
+description: "Reference for the org.postgresql.copy.CopyManager class for PostgreSQL COPY bulk data transfer."
+keywords: ["pgjdbc", "CopyManager", "COPY", "bulk import", "bulk export", "STDIN", "STDOUT", "ETL"]
+---
+
+`org.postgresql.copy.CopyManager` provides access to PostgreSQL's `COPY` command for high-performance bulk data transfer. COPY is significantly faster than individual `INSERT` or `SELECT` statements for large data volumes.
+
+## Accessing CopyManager
+
+Obtain a `CopyManager` instance from `PGConnection.getCopyAPI()`:
+
+```java
+Connection conn = DriverManager.getConnection(url, props);
+PGConnection pgConn = conn.unwrap(org.postgresql.PGConnection.class);
+CopyManager copyManager = pgConn.getCopyAPI();
+```
+
+## CopyIn: bulk data import
+
+Use `COPY FROM STDIN` to load data into a table.
+
+### Low-level CopyIn
+
+```java
+CopyIn copyIn(String sql) throws SQLException
+```
+
+Returns a `CopyIn` object for manual byte-level control over the data transfer.
+
+```java
+CopyIn cp = copyManager.copyIn("COPY mytable FROM STDIN");
+```
+
+#### CopyIn methods
+
+| Method | Description |
+|---|---|
+| `writeToCopy(byte[] buf, int off, int len)` | Write bytes to the copy stream. |
+| `endCopy() → long` | Complete the copy operation. Returns the number of rows copied (PostgreSQL 8.2+), or `-1` for older servers. |
+| `getHandledRowCount() → long` | Returns the number of rows handled after `endCopy()` has been called. |
+| `cancelCopy()` | Abort the in-progress copy operation. |
+| `isActive() → boolean` | Returns `true` if the copy operation is still in progress. |
+
+### Convenience method: InputStream
+
+```java
+long copyIn(String sql, InputStream from) throws SQLException, IOException
+long copyIn(String sql, InputStream from, int bufferSize) throws SQLException, IOException
+```
+
+Streams bytes from an `InputStream` directly into the database. The default buffer size is 65,536 bytes.
+
+```java
+try (InputStream csvStream = new FileInputStream("/data/users.csv")) {
+    long rowsCopied = copyManager.copyIn("COPY users FROM STDIN CSV HEADER", csvStream);
+    System.out.println("Imported " + rowsCopied + " rows");
+}
+```
+
+### Convenience method: Reader
+
+```java
+long copyIn(String sql, Reader from) throws SQLException, IOException
+long copyIn(String sql, Reader from, int bufferSize) throws SQLException, IOException
+```
+
+Streams characters from a `Reader`, encoding them using the connection's character encoding.
+
+```java
+try (Reader reader = new FileReader("/data/users.csv")) {
+    long rowsCopied = copyManager.copyIn("COPY users FROM STDIN CSV HEADER", reader);
+}
+```
+
+## CopyOut: bulk data export
+
+Use `COPY TO STDOUT` to export data from a table.
+
+### Low-level CopyOut
+
+```java
+CopyOut copyOut(String sql) throws SQLException
+```
+
+Returns a `CopyOut` object for reading raw bytes from the copy stream.
+
+```java
+CopyOut cp = copyManager.copyOut("COPY mytable TO STDOUT");
+```
+
+#### CopyOut methods
+
+| Method | Description |
+|---|---|
+| `readFromCopy() → byte[]` | Read the next row as bytes. Returns `null` when all rows have been read. |
+| `getHandledRowCount() → long` | Returns the number of rows handled after all rows have been read. |
+| `cancelCopy()` | Abort the in-progress copy operation. |
+| `isActive() → boolean` | Returns `true` if the copy operation is still in progress. |
+
+### Convenience method: OutputStream
+
+```java
+long copyOut(String sql, OutputStream to) throws SQLException, IOException
+```
+
+Writes all rows from the copy operation to an `OutputStream`. The stream is not closed after the operation completes.
+
+```java
+try (OutputStream out = new FileOutputStream("/data/export.csv")) {
+    long rowsCopied = copyManager.copyOut(
+        "COPY users TO STDOUT CSV HEADER", out);
+    System.out.println("Exported " + rowsCopied + " rows");
+}
+```
+
+### Convenience method: Writer
+
+```java
+long copyOut(String sql, Writer to) throws SQLException, IOException
+```
+
+Writes all rows to a `Writer`, decoding bytes using the connection's character encoding.
+
+## Complete examples
+
+### COPY FROM STDIN (bulk import)
+
+```java
+/*
+ * Table DDL:
+ * CREATE TABLE copytest (stringvalue text, intvalue int, numvalue numeric(5,2));
+ */
+private static String[] origData = {
+    "First Row\t1\t1.10\n",
+    "Second Row\t2\t-22.20\n",
+    "\\N\t\\N\t\\N\n",
+    "\t4\t444.40\n"
+};
+
+try (Connection conn = DriverManager.getConnection(url, "postgres", "password")) {
+    PGConnection pgConnection = conn.unwrap(org.postgresql.PGConnection.class);
+    CopyManager copyAPI = pgConnection.getCopyAPI();
+    CopyIn cp = copyAPI.copyIn("COPY copytest FROM STDIN");
+
+    for (String row : origData) {
+        byte[] buf = row.getBytes();
+        cp.writeToCopy(buf, 0, buf.length);
+    }
+
+    long rowsUpdated = cp.endCopy();
+    long rowsHandled = cp.getHandledRowCount();
+    System.out.printf("Copied %d rows, handled %d rows%n", rowsUpdated, rowsHandled);
+}
+```
+
+### COPY TO STDOUT (bulk export)
+
+```java
+try (Connection conn = DriverManager.getConnection(url, "postgres", "password")) {
+    PGConnection pgConnection = conn.unwrap(org.postgresql.PGConnection.class);
+    CopyManager copyAPI = pgConnection.getCopyAPI();
+    CopyOut cp = copyAPI.copyOut("COPY copytest TO STDOUT");
+
+    int count = 0;
+    byte[] buf;
+    while ((buf = cp.readFromCopy()) != null) {
+        // buf contains one row of tab-separated text
+        System.out.print(new String(buf));
+        count++;
+    }
+
+    long rowCount = cp.getHandledRowCount();
+    System.out.println("Exported " + rowCount + " rows");
+}
+```
+
+### Streaming CSV import from file
+
+```java
+String sql = "COPY users(name, email, created_at) FROM STDIN CSV HEADER";
+
+try (Connection conn = DriverManager.getConnection(url, props);
+     InputStream csvFile = new FileInputStream("/data/users.csv")) {
+
+    PGConnection pgConn = conn.unwrap(org.postgresql.PGConnection.class);
+    CopyManager cm = pgConn.getCopyAPI();
+
+    long rows = cm.copyIn(sql, csvFile);
+    System.out.println("Imported " + rows + " rows from CSV");
+}
+```
+
+### Streaming export to file
+
+```java
+String sql = "COPY (SELECT id, name, email FROM users ORDER BY id) TO STDOUT CSV HEADER";
+
+try (Connection conn = DriverManager.getConnection(url, props);
+     OutputStream out = new FileOutputStream("/data/export.csv")) {
+
+    PGConnection pgConn = conn.unwrap(org.postgresql.PGConnection.class);
+    CopyManager cm = pgConn.getCopyAPI();
+
+    long rows = cm.copyOut(sql, out);
+    System.out.println("Exported " + rows + " rows");
+}
+```
+
+## COPY SQL syntax
+
+The `sql` parameter passed to `copyIn()` or `copyOut()` is a standard PostgreSQL `COPY` statement. Common formats:
+
+```sql
+-- Basic tab-delimited import
+COPY mytable FROM STDIN
+
+-- CSV import with header row
+COPY mytable FROM STDIN CSV HEADER
+
+-- Export specific columns
+COPY mytable (col1, col2) TO STDOUT
+
+-- Export query results as CSV
+COPY (SELECT * FROM mytable WHERE active = true) TO STDOUT CSV HEADER
+
+-- Binary format
+COPY mytable FROM STDIN BINARY
+```
+
+<Tip>
+For maximum performance on large imports, use binary format (`COPY ... WITH (FORMAT binary)`) and consider disabling indexes and triggers during the load.
+</Tip>
+
+## Use cases
+
+- **Bulk data import**: Loading CSV or TSV files into PostgreSQL tables orders of magnitude faster than row-by-row inserts.
+- **Bulk data export**: Exporting large result sets to files or streams without loading all rows into memory.
+- **ETL pipelines**: Reading from one system and streaming directly into PostgreSQL.
+- **Database seeding**: Loading test data or initial datasets into development databases.
+- **Data migration**: Moving data between tables or databases.

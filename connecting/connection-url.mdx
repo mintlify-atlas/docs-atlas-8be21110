@@ -1,0 +1,161 @@
+---
+title: "Connection URL"
+description: "How to build a PostgreSQL JDBC connection URL, including host, port, database, IPv6, and multi-host failover syntax."
+keywords: ["connection url", "jdbc url", "postgresql connection", "failover", "connection string"]
+---
+
+The PostgreSQL JDBC driver accepts URLs in several forms. The general format is:
+
+```
+jdbc:postgresql:[//host[:port]/][database][?property1=value1[&property2=value2]...]
+```
+
+## Supported URL formats
+
+The driver recognizes the following URL forms:
+
+```
+jdbc:postgresql:database
+jdbc:postgresql://host/database
+jdbc:postgresql://host:port/database
+jdbc:postgresql://?service=myservice
+```
+
+## URL parameters
+
+<ParamField path="host" type="string" default="localhost">
+  The server host name or IP address. Defaults to `localhost`. To use an IPv6 address, enclose it in square brackets:
+
+  ```
+  jdbc:postgresql://[::1]:5740/accounting
+  ```
+</ParamField>
+
+<ParamField path="port" type="integer" default="5432">
+  The port number the server is listening on. Defaults to the PostgreSQL standard port `5432`.
+</ParamField>
+
+<ParamField path="database" type="string">
+  The database name. Defaults to the same name as the user connecting to the server.
+</ParamField>
+
+## Basic examples
+
+<CodeGroup>
+
+```text Minimal (database only)
+jdbc:postgresql:mydb
+```
+
+```text Host and database
+jdbc:postgresql://db.example.com/mydb
+```
+
+```text Host, port, and database
+jdbc:postgresql://db.example.com:5432/mydb
+```
+
+```text Service file reference
+jdbc:postgresql://?service=myservice
+```
+
+</CodeGroup>
+
+## Connecting with properties
+
+Connection properties can be appended to the URL as query parameters or passed separately via a `Properties` object.
+
+<Note>
+If a property is specified both in the URL and in a `Properties` object, the value from the `Properties` object is ignored.
+</Note>
+
+<Tabs>
+  <Tab title="URL parameters">
+    ```java
+    String url = "jdbc:postgresql://localhost/test?user=fred&password=secret&ssl=true";
+    Connection conn = DriverManager.getConnection(url);
+    ```
+  </Tab>
+  <Tab title="Properties object">
+    ```java
+    String url = "jdbc:postgresql://localhost/test";
+    Properties props = new Properties();
+    props.setProperty("user", "fred");
+    props.setProperty("password", "secret");
+    props.setProperty("ssl", "true");
+    Connection conn = DriverManager.getConnection(url, props);
+    ```
+  </Tab>
+</Tabs>
+
+## Special characters in URLs
+
+<Warning>
+Any reserved URL characters (for example, `/`, `:`, `@`, `(`, `)`, `[`, `]`, `&`, `#`, `=`, `?`, and space) that appear in any part of the connection URL must be percent-encoded. See [RFC 3986](https://www.rfc-editor.org/rfc/rfc3986#section-2) for details.
+</Warning>
+
+For example, when passing session parameters via the `options` property in a URL, spaces must be percent-encoded as `%20`:
+
+```java
+String url = "jdbc:postgresql://localhost:5432/postgres?options=-c%20search_path=test,public,pg_catalog%20-c%20statement_timeout=90000";
+Connection conn = DriverManager.getConnection(url);
+```
+
+When using a `Properties` object, no encoding is needed:
+
+```java
+Properties props = new Properties();
+props.setProperty("options", "-c search_path=test,public,pg_catalog -c statement_timeout=90000");
+Connection conn = DriverManager.getConnection(url, props);
+```
+
+## IPv6 addresses
+
+Enclose IPv6 addresses in square brackets:
+
+```
+jdbc:postgresql://[::1]:5740/accounting
+```
+
+## Connection failover
+
+To support simple connection failover, define multiple host and port pairs separated by commas. The driver tries each host in order until a connection succeeds. If none succeed, a normal connection exception is thrown.
+
+```
+jdbc:postgresql://host1:port1,host2:port2/database
+```
+
+### Targeting server roles
+
+Use `targetServerType` to restrict connections to servers with a specific role:
+
+```
+jdbc:postgresql://node1,node2,node3/accounting?targetServerType=primary
+```
+
+Allowed values for `targetServerType`: `any`, `primary`, `secondary`, `preferSecondary`, `preferPrimary`.
+
+<Tip>
+The `preferSecondary` value connects to a secondary if one is available, falling back to the primary. `preferPrimary` prefers a primary but falls back to secondaries.
+</Tip>
+
+### Load balancing across hosts
+
+Use `loadBalanceHosts=true` to select a host randomly from the set of suitable candidates rather than in order:
+
+```
+jdbc:postgresql://node1,node2,node3/accounting?targetServerType=preferSecondary&loadBalanceHosts=true
+```
+
+### Example: read/write split
+
+An application can maintain two connection pools:
+
+- **Write pool** — connections restricted to the primary node:
+  ```
+  jdbc:postgresql://node1,node2,node3/accounting?targetServerType=primary
+  ```
+- **Read pool** — connections balanced across secondaries, falling back to primary:
+  ```
+  jdbc:postgresql://node1,node2,node3/accounting?targetServerType=preferSecondary&loadBalanceHosts=true
+  ```
